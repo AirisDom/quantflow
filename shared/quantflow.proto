@@ -1,0 +1,54 @@
+syntax = "proto3";
+
+package quantflow;
+
+option csharp_namespace = "QuantFlow.Protos";
+
+enum SignalType {
+    HOLD = 0;
+    BUY = 1;
+    SELL = 2;
+}
+
+enum OrderSide {
+    SIDE_BUY = 0;
+    SIDE_SELL = 1;
+}
+
+enum ExecutionStatus {
+    PENDING = 0;
+    FILLED = 1;
+    REJECTED = 2;
+}
+
+message PriceTick {
+    string asset = 1;
+    double price = 2;
+    int64 timestamp = 3;
+}
+
+message TradeSignal {
+    string asset = 1;
+    SignalType signal = 2;
+}
+
+message OrderRequest {
+    string asset = 1;
+    double quantity = 2;
+    OrderSide side = 3;
+}
+
+message ExecutionReceipt {
+    string order_id = 1;
+    double fill_price = 2;
+    ExecutionStatus status = 3;
+    int64 timestamp = 4;
+}
+
+service SignalService {
+    rpc GetSignal(stream PriceTick) returns (TradeSignal);
+}
+
+service ExecutionService {
+    rpc ExecuteOrder(OrderRequest) returns (ExecutionReceipt);
+}
