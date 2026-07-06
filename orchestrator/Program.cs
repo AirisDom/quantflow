@@ -8,6 +8,7 @@ builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
 
 builder.Services.AddSingleton<IRiskManager, RiskManager>();
+builder.Services.AddSingleton<IPortfolioService, PortfolioService>();
 
 builder.Services.AddOpenApi();
 
