@@ -1,10 +1,13 @@
 using Microsoft.EntityFrameworkCore;
 using QuantFlow.Orchestrator.Data;
+using QuantFlow.Orchestrator.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
+
+builder.Services.AddSingleton<IRiskManager, RiskManager>();
 
 builder.Services.AddOpenApi();
 
