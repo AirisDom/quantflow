@@ -30,6 +30,8 @@ message PriceTick {
 message TradeSignal {
     string asset = 1;
     SignalType signal = 2;
+    int64 timestamp = 3;
+    double confidence = 4;
 }
 
 message OrderRequest {
