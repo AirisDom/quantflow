@@ -4,9 +4,11 @@ pub mod quantflow {
 
 use quantflow::execution_service_server::{ExecutionService, ExecutionServiceServer};
 use quantflow::{ExecutionReceipt, ExecutionStatus, OrderRequest, OrderSide};
+use rand::Rng;
 use std::env;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tonic::{transport::Server, Request, Response, Status};
+use uuid::Uuid;
 
 #[derive(Debug, Default)]
 pub struct ExecutionServiceImpl;
@@ -38,11 +40,13 @@ impl ExecutionService for ExecutionServiceImpl {
             return Err(Status::invalid_argument("quantity must be positive"));
         }
 
-        let delay_ms = 10 + (rand_u64() % 41);
+        let mut rng = rand::thread_rng();
+
+        let delay_ms = rng.gen_range(10..=50);
         tokio::time::sleep(tokio::time::Duration::from_millis(delay_ms)).await;
 
-        let slippage = (rand_u64() % 100) as f64 / 10000.0 - 0.005;
-        let base_price = 100.0;
+        let base_price = get_mock_market_price(&order.asset);
+        let slippage = rng.gen_range(-0.001..=0.001);
         let fill_price = base_price * (1.0 + slippage);
 
         let timestamp = SystemTime::now()
@@ -50,7 +54,7 @@ impl ExecutionService for ExecutionServiceImpl {
             .unwrap()
             .as_millis() as i64;
 
-        let order_id = format!("ORD-{}-{}", order.asset, timestamp);
+        let order_id = Uuid::new_v4().to_string();
 
         let receipt = ExecutionReceipt {
             order_id: order_id.clone(),
@@ -60,19 +64,24 @@ impl ExecutionService for ExecutionServiceImpl {
         };
 
         println!(
-            "[ExecutionService] Order executed: order_id={}, fill_price={:.4}, latency={}ms",
-            order_id, fill_price, delay_ms
+            "[ExecutionService] Order executed: order_id={}, fill_price={:.4}, slippage={:+.4}%, latency={}ms",
+            order_id, fill_price, slippage * 100.0, delay_ms
         );
 
         Ok(Response::new(receipt))
     }
 }
 
-fn rand_u64() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .subsec_nanos() as u64
+fn get_mock_market_price(asset: &str) -> f64 {
+    match asset.to_uppercase().as_str() {
+        "BTC" | "BTCUSD" => 45000.0,
+        "ETH" | "ETHUSD" => 2500.0,
+        "AAPL" => 175.0,
+        "GOOGL" => 140.0,
+        "MSFT" => 380.0,
+        "SPY" => 450.0,
+        _ => 100.0,
+    }
 }
 
 #[tokio::main]
