@@ -11,6 +11,7 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 builder.Services.AddSingleton<IRiskManager, RiskManager>();
 builder.Services.AddSingleton<IPortfolioService, PortfolioService>();
 builder.Services.AddSingleton<ISignalServiceClient, SignalServiceClient>();
+builder.Services.AddSingleton<IExecutionServiceClient, ExecutionServiceClient>();
 
 builder.Services.AddOpenApi();
 
