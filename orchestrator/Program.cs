@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using QuantFlow.Orchestrator.Clients;
 using QuantFlow.Orchestrator.Data;
 using QuantFlow.Orchestrator.Services;
 
@@ -9,6 +10,7 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 
 builder.Services.AddSingleton<IRiskManager, RiskManager>();
 builder.Services.AddSingleton<IPortfolioService, PortfolioService>();
+builder.Services.AddSingleton<ISignalServiceClient, SignalServiceClient>();
 
 builder.Services.AddOpenApi();
 
