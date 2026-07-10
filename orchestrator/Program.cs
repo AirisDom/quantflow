@@ -1,7 +1,9 @@
 using Microsoft.EntityFrameworkCore;
+using QuantFlow.Orchestrator.Channels;
 using QuantFlow.Orchestrator.Clients;
 using QuantFlow.Orchestrator.Data;
 using QuantFlow.Orchestrator.Services;
+using QuantFlow.Orchestrator.Workers;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -12,6 +14,9 @@ builder.Services.AddSingleton<IRiskManager, RiskManager>();
 builder.Services.AddSingleton<IPortfolioService, PortfolioService>();
 builder.Services.AddSingleton<ISignalServiceClient, SignalServiceClient>();
 builder.Services.AddSingleton<IExecutionServiceClient, ExecutionServiceClient>();
+
+builder.Services.AddSingleton<IPriceTickChannel, PriceTickChannel>();
+builder.Services.AddHostedService<PriceTickerWorker>();
 
 builder.Services.AddOpenApi();
 
