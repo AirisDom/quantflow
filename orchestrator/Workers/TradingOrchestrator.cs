@@ -186,16 +186,7 @@ public class TradingOrchestrator : IHostedService
             _logger.LogInformation("Order FILLED: {OrderId} {Asset} {Side} @ {FillPrice:F2}",
                 receipt.OrderId, proposal.Asset, proposal.Side, receipt.FillPrice);
 
-            var executedTrade = new ExecutedTrade(
-                proposal.Asset,
-                proposal.Quantity,
-                (decimal)receipt.FillPrice,
-                proposal.Side,
-                DateTime.UtcNow
-            );
-            _portfolioService.UpdatePositionAfterTrade(executedTrade);
-
-            await RecordTradeAsync(proposal, receipt, cancellationToken);
+            await RecordAndUpdatePortfolioAsync(proposal, receipt, cancellationToken);
         }
         else
         {
@@ -204,16 +195,18 @@ public class TradingOrchestrator : IHostedService
         }
     }
 
-    private async Task RecordTradeAsync(TradeProposal proposal, ExecutionReceipt receipt, CancellationToken cancellationToken)
+    private async Task RecordAndUpdatePortfolioAsync(TradeProposal proposal, ExecutionReceipt receipt, CancellationToken cancellationToken)
     {
+        using var scope = _scopeFactory.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
         try
         {
-            using var scope = _scopeFactory.CreateScope();
-            var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-
             var tradeRecord = new TradeRecord
             {
                 Id = Guid.NewGuid(),
+                OrderId = receipt.OrderId,
                 Asset = proposal.Asset,
                 Side = proposal.Side.ToString(),
                 Quantity = proposal.Quantity,
@@ -224,11 +217,24 @@ public class TradingOrchestrator : IHostedService
             dbContext.TradeRecords.Add(tradeRecord);
             await dbContext.SaveChangesAsync(cancellationToken);
 
-            _logger.LogDebug("Trade recorded to database: {TradeId}", tradeRecord.Id);
+            var executedTrade = new ExecutedTrade(
+                proposal.Asset,
+                proposal.Quantity,
+                (decimal)receipt.FillPrice,
+                proposal.Side,
+                tradeRecord.Timestamp
+            );
+            _portfolioService.UpdatePositionAfterTrade(executedTrade);
+
+            await transaction.CommitAsync(cancellationToken);
+
+            _logger.LogDebug("Trade recorded and portfolio updated: {TradeId} {OrderId}", tradeRecord.Id, tradeRecord.OrderId);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to record trade for {Asset}", proposal.Asset);
+            await transaction.RollbackAsync(cancellationToken);
+            _logger.LogError(ex, "Failed to record trade for {Asset}, transaction rolled back", proposal.Asset);
+            throw;
         }
     }
 }
