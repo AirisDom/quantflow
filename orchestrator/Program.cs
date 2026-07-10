@@ -17,6 +17,7 @@ builder.Services.AddSingleton<IExecutionServiceClient, ExecutionServiceClient>()
 
 builder.Services.AddSingleton<IPriceTickChannel, PriceTickChannel>();
 builder.Services.AddHostedService<PriceTickerWorker>();
+builder.Services.AddHostedService<TradingOrchestrator>();
 
 builder.Services.AddOpenApi();
 
