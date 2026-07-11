@@ -34,28 +34,101 @@ if (app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 
-var summaries = new[]
+app.MapGet("/health", () =>
 {
-    "Freezing", "Bracing", "Chilly", "Cool", "Mild", "Warm", "Balmy", "Hot", "Sweltering", "Scorching"
-};
-
-app.MapGet("/weatherforecast", () =>
-{
-    var forecast =  Enumerable.Range(1, 5).Select(index =>
-        new WeatherForecast
-        (
-            DateOnly.FromDateTime(DateTime.Now.AddDays(index)),
-            Random.Shared.Next(-20, 55),
-            summaries[Random.Shared.Next(summaries.Length)]
-        ))
-        .ToArray();
-    return forecast;
+    var healthResponse = new
+    {
+        Status = "Healthy",
+        Service = "QuantFlow.Orchestrator",
+        Timestamp = DateTime.UtcNow
+    };
+    return Results.Ok(healthResponse);
 })
-.WithName("GetWeatherForecast");
+.WithName("HealthCheck");
+
+app.MapGet("/portfolio", (IPortfolioService portfolioService) =>
+{
+    var summary = portfolioService.GetSummary();
+    var response = new
+    {
+        summary.CashBalance,
+        summary.TotalMarketValue,
+        summary.TotalEquity,
+        summary.RealizedPnL,
+        summary.UnrealizedPnL,
+        summary.PeakEquity,
+        Positions = summary.Positions.Values.Select(p => new
+        {
+            p.Asset,
+            p.Quantity,
+            p.AverageCost,
+            p.CurrentPrice,
+            p.MarketValue,
+            p.UnrealizedPnL,
+            p.UnrealizedPnLPercent
+        })
+    };
+    return Results.Ok(response);
+})
+.WithName("GetPortfolio");
+
+app.MapGet("/trades", async (AppDbContext db, int page = 1, int pageSize = 20) =>
+{
+    if (page < 1) page = 1;
+    if (pageSize < 1) pageSize = 1;
+    if (pageSize > 100) pageSize = 100;
+
+    var totalCount = await db.TradeRecords.CountAsync();
+    var totalPages = (int)Math.Ceiling(totalCount / (double)pageSize);
+
+    var trades = await db.TradeRecords
+        .OrderByDescending(t => t.Timestamp)
+        .Skip((page - 1) * pageSize)
+        .Take(pageSize)
+        .Select(t => new
+        {
+            t.Id,
+            t.OrderId,
+            t.Asset,
+            t.Side,
+            t.Quantity,
+            t.Price,
+            t.Timestamp
+        })
+        .ToListAsync();
+
+    var response = new
+    {
+        Page = page,
+        PageSize = pageSize,
+        TotalCount = totalCount,
+        TotalPages = totalPages,
+        Trades = trades
+    };
+    return Results.Ok(response);
+})
+.WithName("GetTrades");
+
+app.MapGet("/trades/{id:guid}", async (Guid id, AppDbContext db) =>
+{
+    var trade = await db.TradeRecords.FindAsync(id);
+    if (trade is null)
+    {
+        return Results.NotFound(new { Error = "Trade not found", TradeId = id });
+    }
+
+    var response = new
+    {
+        trade.Id,
+        trade.OrderId,
+        trade.Asset,
+        trade.Side,
+        trade.Quantity,
+        trade.Price,
+        trade.Timestamp
+    };
+    return Results.Ok(response);
+})
+.WithName("GetTradeById");
 
 app.Run();
-
-record WeatherForecast(DateOnly Date, int TemperatureC, string? Summary)
-{
-    public int TemperatureF => 32 + (int)(TemperatureC / 0.5556);
-}
