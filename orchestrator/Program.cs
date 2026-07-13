@@ -12,6 +12,7 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 
 builder.Services.AddSingleton<IRiskManager, RiskManager>();
 builder.Services.AddSingleton<IPortfolioService, PortfolioService>();
+builder.Services.AddSingleton<ITradingControlService, TradingControlService>();
 builder.Services.AddSingleton<ISignalServiceClient, SignalServiceClient>();
 builder.Services.AddSingleton<IExecutionServiceClient, ExecutionServiceClient>();
 
@@ -131,4 +132,117 @@ app.MapGet("/trades/{id:guid}", async (Guid id, AppDbContext db) =>
 })
 .WithName("GetTradeById");
 
+app.MapGet("/risk/limits", (IRiskManager riskManager) =>
+{
+    var limits = riskManager.GetCurrentLimits();
+    var response = new
+    {
+        limits.MaxDrawdownPercent,
+        limits.MaxPositionSizePercent,
+        limits.MaxExposurePercent,
+        limits.MinOrderValue,
+        MaxDrawdownPercentFormatted = $"{limits.MaxDrawdownPercent:P2}",
+        MaxPositionSizePercentFormatted = $"{limits.MaxPositionSizePercent:P2}",
+        MaxExposurePercentFormatted = $"{limits.MaxExposurePercent:P2}"
+    };
+    return Results.Ok(response);
+})
+.WithName("GetRiskLimits");
+
+app.MapPut("/risk/limits", (RiskLimitsUpdateRequest request, IRiskManager riskManager) =>
+{
+    var errors = new List<string>();
+
+    if (request.MaxDrawdownPercent.HasValue)
+    {
+        if (request.MaxDrawdownPercent.Value < 0 || request.MaxDrawdownPercent.Value > 1)
+            errors.Add("MaxDrawdownPercent must be between 0 and 1");
+    }
+    if (request.MaxPositionSizePercent.HasValue)
+    {
+        if (request.MaxPositionSizePercent.Value < 0 || request.MaxPositionSizePercent.Value > 1)
+            errors.Add("MaxPositionSizePercent must be between 0 and 1");
+    }
+    if (request.MaxExposurePercent.HasValue)
+    {
+        if (request.MaxExposurePercent.Value < 0 || request.MaxExposurePercent.Value > 1)
+            errors.Add("MaxExposurePercent must be between 0 and 1");
+    }
+    if (request.MinOrderValue.HasValue)
+    {
+        if (request.MinOrderValue.Value < 0)
+            errors.Add("MinOrderValue must be non-negative");
+    }
+
+    if (errors.Count > 0)
+    {
+        return Results.BadRequest(new { Errors = errors });
+    }
+
+    var updatedLimits = riskManager.UpdateLimits(request);
+    var response = new
+    {
+        Message = "Risk limits updated successfully",
+        Limits = new
+        {
+            updatedLimits.MaxDrawdownPercent,
+            updatedLimits.MaxPositionSizePercent,
+            updatedLimits.MaxExposurePercent,
+            updatedLimits.MinOrderValue,
+            MaxDrawdownPercentFormatted = $"{updatedLimits.MaxDrawdownPercent:P2}",
+            MaxPositionSizePercentFormatted = $"{updatedLimits.MaxPositionSizePercent:P2}",
+            MaxExposurePercentFormatted = $"{updatedLimits.MaxExposurePercent:P2}"
+        }
+    };
+    return Results.Ok(response);
+})
+.WithName("UpdateRiskLimits");
+
+app.MapGet("/trading/status", (ITradingControlService tradingControl) =>
+{
+    var status = tradingControl.GetStatus();
+    var response = new
+    {
+        status.IsTradingEnabled,
+        Status = status.IsTradingEnabled ? "Active" : "Paused",
+        status.PausedAt,
+        status.PausedBy,
+        status.PauseReason
+    };
+    return Results.Ok(response);
+})
+.WithName("GetTradingStatus");
+
+app.MapPost("/trading/pause", (TradingPauseRequest? request, ITradingControlService tradingControl) =>
+{
+    var status = tradingControl.Pause(request?.Reason, request?.PausedBy);
+    var response = new
+    {
+        Message = status.IsTradingEnabled ? "Trading was already paused" : "Trading paused successfully",
+        status.IsTradingEnabled,
+        Status = status.IsTradingEnabled ? "Active" : "Paused",
+        status.PausedAt,
+        status.PausedBy,
+        status.PauseReason
+    };
+    return Results.Ok(response);
+})
+.WithName("PauseTrading");
+
+app.MapPost("/trading/resume", (TradingResumeRequest? request, ITradingControlService tradingControl) =>
+{
+    var status = tradingControl.Resume(request?.ResumedBy);
+    var response = new
+    {
+        Message = status.IsTradingEnabled ? "Trading resumed successfully" : "Trading was already active",
+        status.IsTradingEnabled,
+        Status = status.IsTradingEnabled ? "Active" : "Paused"
+    };
+    return Results.Ok(response);
+})
+.WithName("ResumeTrading");
+
 app.Run();
+
+public record TradingPauseRequest(string? Reason, string? PausedBy);
+public record TradingResumeRequest(string? ResumedBy);

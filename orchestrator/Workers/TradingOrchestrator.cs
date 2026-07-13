@@ -11,7 +11,6 @@ public class TradingOrchestratorOptions
 {
     public decimal DefaultOrderQuantity { get; set; } = 0.1m;
     public double MinConfidenceThreshold { get; set; } = 0.5;
-    public bool EnableTrading { get; set; } = true;
 }
 
 public class TradingOrchestrator : IHostedService
@@ -21,6 +20,7 @@ public class TradingOrchestrator : IHostedService
     private readonly IExecutionServiceClient _executionClient;
     private readonly IRiskManager _riskManager;
     private readonly IPortfolioService _portfolioService;
+    private readonly ITradingControlService _tradingControl;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<TradingOrchestrator> _logger;
     private readonly TradingOrchestratorOptions _options;
@@ -33,6 +33,7 @@ public class TradingOrchestrator : IHostedService
         IExecutionServiceClient executionClient,
         IRiskManager riskManager,
         IPortfolioService portfolioService,
+        ITradingControlService tradingControl,
         IServiceScopeFactory scopeFactory,
         ILogger<TradingOrchestrator> logger,
         IConfiguration configuration)
@@ -42,6 +43,7 @@ public class TradingOrchestrator : IHostedService
         _executionClient = executionClient;
         _riskManager = riskManager;
         _portfolioService = portfolioService;
+        _tradingControl = tradingControl;
         _scopeFactory = scopeFactory;
         _logger = logger;
         _options = new TradingOrchestratorOptions();
@@ -50,7 +52,7 @@ public class TradingOrchestrator : IHostedService
 
     public Task StartAsync(CancellationToken cancellationToken)
     {
-        _logger.LogInformation("TradingOrchestrator starting (trading enabled: {Enabled})", _options.EnableTrading);
+        _logger.LogInformation("TradingOrchestrator starting (trading enabled: {Enabled})", _tradingControl.IsTradingEnabled);
 
         _cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         _executingTask = ExecuteAsync(_cts.Token);
@@ -141,9 +143,9 @@ public class TradingOrchestrator : IHostedService
         _logger.LogInformation("Trade APPROVED by RiskManager: {Asset} {Side} {Quantity} @ {Price:F2}",
             proposal.Asset, proposal.Side, proposal.Quantity, proposal.Price);
 
-        if (!_options.EnableTrading)
+        if (!_tradingControl.IsTradingEnabled)
         {
-            _logger.LogInformation("Trading disabled, skipping execution for {Asset}", proposal.Asset);
+            _logger.LogInformation("Trading paused, skipping execution for {Asset}", proposal.Asset);
             return;
         }
 

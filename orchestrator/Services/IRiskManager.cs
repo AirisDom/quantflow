@@ -25,10 +25,26 @@ public record PortfolioState(
     decimal TotalExposure
 );
 
+public record RiskLimits(
+    decimal MaxDrawdownPercent,
+    decimal MaxPositionSizePercent,
+    decimal MaxExposurePercent,
+    decimal MinOrderValue
+);
+
+public record RiskLimitsUpdateRequest(
+    decimal? MaxDrawdownPercent,
+    decimal? MaxPositionSizePercent,
+    decimal? MaxExposurePercent,
+    decimal? MinOrderValue
+);
+
 public interface IRiskManager
 {
     RiskDecision EvaluateTrade(TradeProposal proposal, PortfolioState portfolio);
     decimal CalculateDrawdown(decimal currentEquity, decimal peakEquity);
     bool ValidatePositionSize(decimal proposedQuantity, decimal price, decimal totalEquity);
     bool ValidateExposure(decimal currentExposure, decimal proposedTradeValue, decimal totalEquity);
+    RiskLimits GetCurrentLimits();
+    RiskLimits UpdateLimits(RiskLimitsUpdateRequest request);
 }
