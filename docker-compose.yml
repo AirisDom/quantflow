@@ -3,15 +3,15 @@ services:
     image: postgres:16-alpine
     container_name: quantflow-postgres
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: quantflow
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: ${POSTGRES_DB:-quantflow}
     ports:
-      - "5432:5432"
+      - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d quantflow"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-quantflow}"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -25,13 +25,14 @@ services:
       dockerfile: signal_engine/Dockerfile
     container_name: quantflow-signal-engine
     environment:
-      SIGNAL_ENGINE_PORT: "50051"
-      SIGNAL_ENGINE_WINDOW_SIZE: "20"
-      SIGNAL_ENGINE_THRESHOLD: "0.02"
+      SIGNAL_ENGINE_PORT: ${SIGNAL_ENGINE_PORT:-50051}
+      SIGNAL_ENGINE_WINDOW_SIZE: ${SIGNAL_ENGINE_WINDOW_SIZE:-20}
+      SIGNAL_ENGINE_THRESHOLD: ${SIGNAL_ENGINE_THRESHOLD:-0.02}
+      SIGNAL_ENGINE_LOG_LEVEL: ${SIGNAL_ENGINE_LOG_LEVEL:-INFO}
     ports:
-      - "50051:50051"
+      - "${SIGNAL_ENGINE_PORT:-50051}:${SIGNAL_ENGINE_PORT:-50051}"
     healthcheck:
-      test: ["CMD", "python", "-c", "import grpc; channel = grpc.insecure_channel('localhost:50051'); grpc.channel_ready_future(channel).result(timeout=5)"]
+      test: ["CMD", "python", "-c", "import grpc; channel = grpc.insecure_channel('localhost:${SIGNAL_ENGINE_PORT:-50051}'); grpc.channel_ready_future(channel).result(timeout=5)"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -45,11 +46,14 @@ services:
       dockerfile: execution_layer/Dockerfile
     container_name: quantflow-execution-layer
     environment:
-      EXECUTION_SERVICE_PORT: "50052"
+      EXECUTION_SERVICE_PORT: ${EXECUTION_SERVICE_PORT:-50052}
+      EXECUTION_MIN_LATENCY_MS: ${EXECUTION_MIN_LATENCY_MS:-10}
+      EXECUTION_MAX_LATENCY_MS: ${EXECUTION_MAX_LATENCY_MS:-50}
+      RUST_LOG: ${RUST_LOG:-info}
     ports:
-      - "50052:50052"
+      - "${EXECUTION_SERVICE_PORT:-50052}:${EXECUTION_SERVICE_PORT:-50052}"
     healthcheck:
-      test: ["CMD-SHELL", "timeout 2 bash -c '</dev/tcp/localhost/50052' || exit 1"]
+      test: ["CMD-SHELL", "timeout 2 bash -c '</dev/tcp/localhost/${EXECUTION_SERVICE_PORT:-50052}' || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -63,12 +67,17 @@ services:
       dockerfile: orchestrator/Dockerfile
     container_name: quantflow-orchestrator
     environment:
-      ASPNETCORE_ENVIRONMENT: Production
-      ASPNETCORE_URLS: "http://+:8080"
-      ConnectionStrings__DefaultConnection: "Host=postgres;Database=quantflow;Username=postgres;Password=postgres"
-      SignalService__Address: "http://signal_engine:50051"
-      ExecutionService__Address: "http://execution_layer:50052"
-      PriceTicker__TickIntervalMs: "1000"
+      ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Production}
+      ASPNETCORE_URLS: ${ASPNETCORE_URLS:-http://+:8080}
+      ConnectionStrings__DefaultConnection: "Host=${POSTGRES_HOST:-postgres};Database=${POSTGRES_DB:-quantflow};Username=${POSTGRES_USER:-postgres};Password=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}"
+      SignalService__Address: ${SIGNAL_SERVICE_ADDRESS:-http://signal_engine:50051}
+      ExecutionService__Address: ${EXECUTION_SERVICE_ADDRESS:-http://execution_layer:50052}
+      PriceTicker__TickIntervalMs: ${PRICE_TICKER_INTERVAL_MS:-1000}
+      Portfolio__InitialCash: ${PORTFOLIO_INITIAL_CASH:-100000}
+      Risk__MaxDrawdownPercent: ${RISK_MAX_DRAWDOWN_PERCENT:-0.05}
+      Risk__MaxPositionSizePercent: ${RISK_MAX_POSITION_SIZE_PERCENT:-0.10}
+      Risk__MaxExposurePercent: ${RISK_MAX_EXPOSURE_PERCENT:-0.80}
+      Risk__MinOrderValue: ${RISK_MIN_ORDER_VALUE:-10}
     ports:
       - "8080:8080"
     depends_on:

@@ -1,11 +1,24 @@
 using Microsoft.EntityFrameworkCore;
 using QuantFlow.Orchestrator.Channels;
 using QuantFlow.Orchestrator.Clients;
+using QuantFlow.Orchestrator.Configuration;
 using QuantFlow.Orchestrator.Data;
 using QuantFlow.Orchestrator.Services;
 using QuantFlow.Orchestrator.Workers;
 
 var builder = WebApplication.CreateBuilder(args);
+
+try
+{
+    builder.Configuration.ValidateRequiredConfiguration();
+}
+catch (ConfigurationValidationException ex)
+{
+    Console.Error.WriteLine($"Configuration Error: {ex.Message}");
+    Environment.Exit(1);
+}
+
+builder.Services.AddQuantFlowConfiguration(builder.Configuration);
 
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));

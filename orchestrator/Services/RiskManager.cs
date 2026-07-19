@@ -1,12 +1,24 @@
+using Microsoft.Extensions.Options;
+using QuantFlow.Orchestrator.Configuration;
+
 namespace QuantFlow.Orchestrator.Services;
 
 public class RiskManager : IRiskManager
 {
     private readonly object _lock = new();
-    private decimal _maxDrawdownPercent = 0.05m;
-    private decimal _maxPositionSizePercent = 0.10m;
-    private decimal _maxExposurePercent = 0.80m;
-    private decimal _minOrderValue = 10m;
+    private decimal _maxDrawdownPercent;
+    private decimal _maxPositionSizePercent;
+    private decimal _maxExposurePercent;
+    private decimal _minOrderValue;
+
+    public RiskManager(IOptions<RiskSettings> options)
+    {
+        var settings = options.Value;
+        _maxDrawdownPercent = settings.MaxDrawdownPercent;
+        _maxPositionSizePercent = settings.MaxPositionSizePercent;
+        _maxExposurePercent = settings.MaxExposurePercent;
+        _minOrderValue = settings.MinOrderValue;
+    }
 
     public RiskDecision EvaluateTrade(TradeProposal proposal, PortfolioState portfolio)
     {

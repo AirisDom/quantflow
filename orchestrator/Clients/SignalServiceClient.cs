@@ -1,6 +1,8 @@
 using Grpc.Core;
 using Grpc.Net.Client;
 using Grpc.Net.Client.Configuration;
+using Microsoft.Extensions.Options;
+using QuantFlow.Orchestrator.Configuration;
 using QuantFlow.Protos;
 
 namespace QuantFlow.Orchestrator.Clients;
@@ -16,14 +18,13 @@ public class SignalServiceClient : ISignalServiceClient
     private readonly GrpcChannel _channel;
     private readonly SignalService.SignalServiceClient _client;
     private readonly ILogger<SignalServiceClient> _logger;
-    private readonly SignalServiceClientOptions _options;
+    private readonly SignalServiceSettings _options;
     private bool _disposed;
 
-    public SignalServiceClient(ILogger<SignalServiceClient> logger, IConfiguration configuration)
+    public SignalServiceClient(ILogger<SignalServiceClient> logger, IOptions<SignalServiceSettings> options)
     {
         _logger = logger;
-        _options = new SignalServiceClientOptions();
-        configuration.GetSection("SignalService").Bind(_options);
+        _options = options.Value;
 
         var serviceConfig = new ServiceConfig
         {
@@ -103,17 +104,4 @@ public class SignalServiceClient : ISignalServiceClient
         Dispose(true);
         GC.SuppressFinalize(this);
     }
-}
-
-public class SignalServiceClientOptions
-{
-    public string Address { get; set; } = "http://localhost:50051";
-    public int MaxRetryAttempts { get; set; } = 5;
-    public int InitialBackoffMs { get; set; } = 100;
-    public int MaxBackoffMs { get; set; } = 5000;
-    public double BackoffMultiplier { get; set; } = 2.0;
-    public int DeadlineMs { get; set; } = 30000;
-    public int IdleTimeoutSeconds { get; set; } = 60;
-    public int KeepAlivePingDelaySeconds { get; set; } = 30;
-    public int KeepAlivePingTimeoutSeconds { get; set; } = 10;
 }

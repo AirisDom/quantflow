@@ -1,3 +1,6 @@
+using Microsoft.Extensions.Options;
+using QuantFlow.Orchestrator.Configuration;
+
 namespace QuantFlow.Orchestrator.Services;
 
 public class PortfolioService : IPortfolioService
@@ -8,9 +11,10 @@ public class PortfolioService : IPortfolioService
     private decimal _realizedPnL;
     private decimal _peakEquity;
 
-    public PortfolioService()
+    public PortfolioService(IOptions<PortfolioSettings> options)
     {
-        _cashBalance = 100_000m;
+        var settings = options.Value;
+        _cashBalance = settings.InitialCash;
         _peakEquity = _cashBalance;
     }
 

@@ -1,31 +1,15 @@
+using Microsoft.Extensions.Options;
 using QuantFlow.Orchestrator.Channels;
+using QuantFlow.Orchestrator.Configuration;
 using QuantFlow.Protos;
 
 namespace QuantFlow.Orchestrator.Workers;
-
-public class PriceTickerOptions
-{
-    public string[] Assets { get; set; } = ["BTC", "ETH", "SPY"];
-    public int TickIntervalMs { get; set; } = 1000;
-    public Dictionary<string, decimal> InitialPrices { get; set; } = new()
-    {
-        ["BTC"] = 67500.00m,
-        ["ETH"] = 3450.00m,
-        ["SPY"] = 542.50m
-    };
-    public Dictionary<string, decimal> Volatility { get; set; } = new()
-    {
-        ["BTC"] = 0.02m,
-        ["ETH"] = 0.025m,
-        ["SPY"] = 0.005m
-    };
-}
 
 public class PriceTickerWorker : IHostedService
 {
     private readonly IPriceTickChannel _channel;
     private readonly ILogger<PriceTickerWorker> _logger;
-    private readonly PriceTickerOptions _options;
+    private readonly PriceTickerSettings _options;
     private readonly Dictionary<string, decimal> _currentPrices;
     private readonly Random _random;
     private CancellationTokenSource? _cts;
@@ -34,12 +18,11 @@ public class PriceTickerWorker : IHostedService
     public PriceTickerWorker(
         IPriceTickChannel channel,
         ILogger<PriceTickerWorker> logger,
-        IConfiguration configuration)
+        IOptions<PriceTickerSettings> options)
     {
         _channel = channel;
         _logger = logger;
-        _options = new PriceTickerOptions();
-        configuration.GetSection("PriceTicker").Bind(_options);
+        _options = options.Value;
         _currentPrices = new Dictionary<string, decimal>(_options.InitialPrices);
         _random = new Random();
 

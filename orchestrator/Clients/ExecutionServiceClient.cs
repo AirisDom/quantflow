@@ -1,6 +1,8 @@
 using Grpc.Core;
 using Grpc.Net.Client;
 using Grpc.Net.Client.Configuration;
+using Microsoft.Extensions.Options;
+using QuantFlow.Orchestrator.Configuration;
 using QuantFlow.Protos;
 
 namespace QuantFlow.Orchestrator.Clients;
@@ -16,7 +18,7 @@ public class ExecutionServiceClient : IExecutionServiceClient
     private readonly GrpcChannel _channel;
     private readonly ExecutionService.ExecutionServiceClient _client;
     private readonly ILogger<ExecutionServiceClient> _logger;
-    private readonly ExecutionServiceClientOptions _options;
+    private readonly ExecutionServiceSettings _options;
     private readonly object _circuitLock = new();
     private bool _disposed;
 
@@ -26,11 +28,10 @@ public class ExecutionServiceClient : IExecutionServiceClient
 
     public bool IsCircuitOpen => _circuitState == CircuitState.Open;
 
-    public ExecutionServiceClient(ILogger<ExecutionServiceClient> logger, IConfiguration configuration)
+    public ExecutionServiceClient(ILogger<ExecutionServiceClient> logger, IOptions<ExecutionServiceSettings> options)
     {
         _logger = logger;
-        _options = new ExecutionServiceClientOptions();
-        configuration.GetSection("ExecutionService").Bind(_options);
+        _options = options.Value;
 
         var serviceConfig = new ServiceConfig
         {
@@ -188,19 +189,4 @@ public class ExecutionServiceClient : IExecutionServiceClient
 public class CircuitBreakerOpenException : Exception
 {
     public CircuitBreakerOpenException(string message) : base(message) { }
-}
-
-public class ExecutionServiceClientOptions
-{
-    public string Address { get; set; } = "http://localhost:50052";
-    public int MaxRetryAttempts { get; set; } = 3;
-    public int InitialBackoffMs { get; set; } = 50;
-    public int MaxBackoffMs { get; set; } = 1000;
-    public double BackoffMultiplier { get; set; } = 1.5;
-    public int DeadlineMs { get; set; } = 5000;
-    public int IdleTimeoutSeconds { get; set; } = 60;
-    public int KeepAlivePingDelaySeconds { get; set; } = 30;
-    public int KeepAlivePingTimeoutSeconds { get; set; } = 10;
-    public int CircuitBreakerFailureThreshold { get; set; } = 5;
-    public int CircuitBreakerResetTimeMs { get; set; } = 30000;
 }

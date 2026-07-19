@@ -10,8 +10,19 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tonic::{transport::Server, Request, Response, Status};
 use uuid::Uuid;
 
-#[derive(Debug, Default)]
-pub struct ExecutionServiceImpl;
+pub struct ExecutionServiceImpl {
+    min_latency_ms: u64,
+    max_latency_ms: u64,
+}
+
+impl ExecutionServiceImpl {
+    pub fn new(min_latency_ms: u64, max_latency_ms: u64) -> Self {
+        Self {
+            min_latency_ms,
+            max_latency_ms,
+        }
+    }
+}
 
 #[tonic::async_trait]
 impl ExecutionService for ExecutionServiceImpl {
@@ -42,7 +53,7 @@ impl ExecutionService for ExecutionServiceImpl {
 
         let mut rng = rand::thread_rng();
 
-        let delay_ms = rng.gen_range(10..=50);
+        let delay_ms = rng.gen_range(self.min_latency_ms..=self.max_latency_ms);
         tokio::time::sleep(tokio::time::Duration::from_millis(delay_ms)).await;
 
         let base_price = get_mock_market_price(&order.asset);
@@ -87,10 +98,23 @@ fn get_mock_market_price(asset: &str) -> f64 {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let port = env::var("EXECUTION_SERVICE_PORT").unwrap_or_else(|_| "50052".to_string());
+    let min_latency_ms: u64 = env::var("EXECUTION_MIN_LATENCY_MS")
+        .unwrap_or_else(|_| "10".to_string())
+        .parse()
+        .unwrap_or(10);
+    let max_latency_ms: u64 = env::var("EXECUTION_MAX_LATENCY_MS")
+        .unwrap_or_else(|_| "50".to_string())
+        .parse()
+        .unwrap_or(50);
+
     let addr = format!("[::]:{}", port).parse()?;
-    let service = ExecutionServiceImpl::default();
+    let service = ExecutionServiceImpl::new(min_latency_ms, max_latency_ms);
 
     println!("[ExecutionService] Starting gRPC server on {}", addr);
+    println!(
+        "[ExecutionService] Latency simulation: {}ms - {}ms",
+        min_latency_ms, max_latency_ms
+    );
 
     Server::builder()
         .add_service(ExecutionServiceServer::new(service))
