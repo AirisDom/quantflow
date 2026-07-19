@@ -69,6 +69,7 @@ services:
     environment:
       ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Production}
       ASPNETCORE_URLS: ${ASPNETCORE_URLS:-http://+:8080}
+      Serilog__MinimumLevel__Default: ${SERILOG_MINIMUM_LEVEL:-Information}
       ConnectionStrings__DefaultConnection: "Host=${POSTGRES_HOST:-postgres};Database=${POSTGRES_DB:-quantflow};Username=${POSTGRES_USER:-postgres};Password=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}"
       SignalService__Address: ${SIGNAL_SERVICE_ADDRESS:-http://signal_engine:50051}
       ExecutionService__Address: ${EXECUTION_SERVICE_ADDRESS:-http://execution_layer:50052}

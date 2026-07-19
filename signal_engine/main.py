@@ -4,17 +4,47 @@ from concurrent import futures
 import numpy as np
 import time
 import logging
+import sys
+from datetime import datetime, timezone
+from pythonjsonlogger import jsonlogger
 
 import quantflow_pb2
 import quantflow_pb2_grpc
 
-log_level = os.environ.get("SIGNAL_ENGINE_LOG_LEVEL", "INFO").upper()
-logging.basicConfig(
-    level=getattr(logging, log_level, logging.INFO),
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S"
-)
-logger = logging.getLogger("SignalEngine")
+
+class QuantFlowJsonFormatter(jsonlogger.JsonFormatter):
+    def add_fields(self, log_record, record, message_dict):
+        super().add_fields(log_record, record, message_dict)
+        log_record['@t'] = datetime.now(timezone.utc).isoformat()
+        log_record['@l'] = record.levelname
+        log_record['@m'] = log_record.pop('message', record.getMessage())
+        log_record['Service'] = 'QuantFlow.SignalEngine'
+        log_record['Version'] = '1.0.0'
+
+        if record.name:
+            log_record['SourceContext'] = record.name
+
+        if record.exc_info:
+            log_record['@x'] = self.formatException(record.exc_info)
+
+
+def setup_logging():
+    log_level = os.environ.get("SIGNAL_ENGINE_LOG_LEVEL", "INFO").upper()
+
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(QuantFlowJsonFormatter())
+
+    root_logger = logging.getLogger()
+    root_logger.handlers.clear()
+    root_logger.addHandler(handler)
+    root_logger.setLevel(getattr(logging, log_level, logging.INFO))
+
+    logging.getLogger('grpc').setLevel(logging.WARNING)
+
+    return logging.getLogger("SignalEngine")
+
+
+logger = setup_logging()
 
 
 class RollingPriceWindow:
@@ -69,10 +99,17 @@ class SignalServiceServicer(quantflow_pb2_grpc.SignalServiceServicer):
         self.threshold = threshold
         self.price_windows: dict[str, RollingPriceWindow] = {}
         logger.info(
-            f"SignalServiceServicer initialized with window_size={window_size}, threshold={threshold}"
+            "SignalServiceServicer initialized",
+            extra={"WindowSize": window_size, "Threshold": threshold}
         )
 
     def GetSignal(self, request_iterator, context):
+        correlation_id = None
+        for key, value in context.invocation_metadata():
+            if key.lower() == 'x-correlation-id':
+                correlation_id = value
+                break
+
         asset = None
         tick_count = 0
 
@@ -80,14 +117,20 @@ class SignalServiceServicer(quantflow_pb2_grpc.SignalServiceServicer):
             asset = tick.asset
             if asset not in self.price_windows:
                 self.price_windows[asset] = RollingPriceWindow(self.window_size)
-                logger.info(f"Created new price window for asset: {asset}")
+                logger.info(
+                    "Created new price window",
+                    extra={"Asset": asset, "CorrelationId": correlation_id}
+                )
             self.price_windows[asset].add_price(tick.price)
             tick_count += 1
 
         timestamp_ms = int(time.time() * 1000)
 
         if not asset or asset not in self.price_windows:
-            logger.warning("No valid asset received in price ticks")
+            logger.warning(
+                "No valid asset received in price ticks",
+                extra={"CorrelationId": correlation_id}
+            )
             return quantflow_pb2.TradeSignal(
                 asset="",
                 signal=quantflow_pb2.HOLD,
@@ -97,7 +140,10 @@ class SignalServiceServicer(quantflow_pb2_grpc.SignalServiceServicer):
 
         window = self.price_windows[asset]
         if len(window) == 0:
-            logger.warning(f"Empty price window for asset: {asset}")
+            logger.warning(
+                "Empty price window",
+                extra={"Asset": asset, "CorrelationId": correlation_id}
+            )
             return quantflow_pb2.TradeSignal(
                 asset=asset,
                 signal=quantflow_pb2.HOLD,
@@ -118,9 +164,16 @@ class SignalServiceServicer(quantflow_pb2_grpc.SignalServiceServicer):
         }.get(signal_type, "UNKNOWN")
 
         logger.info(
-            f"Signal generated for {asset}: {signal_name} | "
-            f"price={current_price:.4f}, ma={moving_average:.4f}, "
-            f"confidence={confidence:.4f}, ticks={tick_count}"
+            "Signal generated",
+            extra={
+                "Asset": asset,
+                "Signal": signal_name,
+                "Price": round(current_price, 4),
+                "MovingAverage": round(moving_average, 4),
+                "Confidence": round(confidence, 4),
+                "TickCount": tick_count,
+                "CorrelationId": correlation_id
+            }
         )
 
         return quantflow_pb2.TradeSignal(
@@ -138,12 +191,15 @@ def serve(port: int = 50051, window_size: int = 20, threshold: float = 0.02):
     )
     server.add_insecure_port(f"[::]:{port}")
     server.start()
-    logger.info(f"Signal Engine gRPC server started on port {port}")
+    logger.info(
+        "Signal Engine gRPC server started",
+        extra={"Port": port, "WindowSize": window_size, "Threshold": threshold}
+    )
     try:
         while True:
             time.sleep(86400)
     except KeyboardInterrupt:
-        logger.info("Shutting down Signal Engine...")
+        logger.info("Shutting down Signal Engine")
         server.stop(0)
 
 
