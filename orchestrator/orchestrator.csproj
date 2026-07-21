@@ -29,7 +29,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Protobuf Include="../shared/quantflow.proto" GrpcServices="Client" />
+    <Protobuf Include="../shared/quantflow.proto" GrpcServices="Both" />
   </ItemGroup>
 
 </Project>
