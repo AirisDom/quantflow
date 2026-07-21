@@ -32,6 +32,11 @@ public record RiskLimits(
     decimal MinOrderValue
 );
 
+/// <summary>Request to update risk limits</summary>
+/// <param name="MaxDrawdownPercent">Maximum drawdown as decimal (0.05 = 5%), must be between 0 and 1</param>
+/// <param name="MaxPositionSizePercent">Maximum position size as decimal, must be between 0 and 1</param>
+/// <param name="MaxExposurePercent">Maximum exposure as decimal, must be between 0 and 1</param>
+/// <param name="MinOrderValue">Minimum order value, must be non-negative</param>
 public record RiskLimitsUpdateRequest(
     decimal? MaxDrawdownPercent,
     decimal? MaxPositionSizePercent,

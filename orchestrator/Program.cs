@@ -1,4 +1,7 @@
+using System.Reflection;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.OpenApi.Models;
+using QuantFlow.Orchestrator.Api;
 using QuantFlow.Orchestrator.Channels;
 using QuantFlow.Orchestrator.Clients;
 using QuantFlow.Orchestrator.Configuration;
@@ -53,7 +56,33 @@ try
     builder.Services.AddHostedService<PriceTickerWorker>();
     builder.Services.AddHostedService<TradingOrchestrator>();
 
-    builder.Services.AddOpenApi();
+    builder.Services.AddEndpointsApiExplorer();
+    builder.Services.AddSwaggerGen(options =>
+    {
+        options.SwaggerDoc("v1", new OpenApiInfo
+        {
+            Version = "v1",
+            Title = "QuantFlow Orchestrator API",
+            Description = "A cloud-native algorithmic trading orchestrator that manages portfolio state, risk limits, and trade execution across Python and Rust microservices.",
+            Contact = new OpenApiContact
+            {
+                Name = "QuantFlow Team",
+                Email = "support@quantflow.io"
+            },
+            License = new OpenApiLicense
+            {
+                Name = "MIT",
+                Url = new Uri("https://opensource.org/licenses/MIT")
+            }
+        });
+
+        var xmlFilename = $"{Assembly.GetExecutingAssembly().GetName().Name}.xml";
+        var xmlPath = Path.Combine(AppContext.BaseDirectory, xmlFilename);
+        if (File.Exists(xmlPath))
+        {
+            options.IncludeXmlComments(xmlPath);
+        }
+    });
 
     var app = builder.Build();
 
@@ -71,6 +100,15 @@ try
         };
     });
 
+    app.UseSwagger();
+    app.UseSwaggerUI(options =>
+    {
+        options.SwaggerEndpoint("/swagger/v1/swagger.json", "QuantFlow Orchestrator API v1");
+        options.RoutePrefix = "swagger";
+        options.DocumentTitle = "QuantFlow API Documentation";
+        options.EnableTryItOutByDefault();
+    });
+
     if (app.Environment.IsDevelopment())
     {
         using var scope = app.Services.CreateScope();
@@ -84,41 +122,48 @@ try
 
     app.MapGet("/health", () =>
     {
-        var healthResponse = new
-        {
-            Status = "Healthy",
-            Service = "QuantFlow.Orchestrator",
-            Timestamp = DateTime.UtcNow
-        };
+        var healthResponse = new HealthResponse(
+            Status: "Healthy",
+            Service: "QuantFlow.Orchestrator",
+            Timestamp: DateTime.UtcNow
+        );
         return Results.Ok(healthResponse);
     })
-    .WithName("HealthCheck");
+    .WithName("HealthCheck")
+    .WithTags("Health")
+    .WithSummary("Check service health")
+    .WithDescription("Returns the current health status of the QuantFlow Orchestrator service.")
+    .Produces<HealthResponse>(StatusCodes.Status200OK)
+    .WithOpenApi();
 
     app.MapGet("/portfolio", (IPortfolioService portfolioService) =>
     {
         var summary = portfolioService.GetSummary();
-        var response = new
-        {
-            summary.CashBalance,
-            summary.TotalMarketValue,
-            summary.TotalEquity,
-            summary.RealizedPnL,
-            summary.UnrealizedPnL,
-            summary.PeakEquity,
-            Positions = summary.Positions.Values.Select(p => new
-            {
-                p.Asset,
-                p.Quantity,
-                p.AverageCost,
-                p.CurrentPrice,
-                p.MarketValue,
-                p.UnrealizedPnL,
-                p.UnrealizedPnLPercent
-            })
-        };
+        var response = new PortfolioResponse(
+            CashBalance: summary.CashBalance,
+            TotalMarketValue: summary.TotalMarketValue,
+            TotalEquity: summary.TotalEquity,
+            RealizedPnL: summary.RealizedPnL,
+            UnrealizedPnL: summary.UnrealizedPnL,
+            PeakEquity: summary.PeakEquity,
+            Positions: summary.Positions.Values.Select(p => new PositionResponse(
+                Asset: p.Asset,
+                Quantity: p.Quantity,
+                AverageCost: p.AverageCost,
+                CurrentPrice: p.CurrentPrice,
+                MarketValue: p.MarketValue,
+                UnrealizedPnL: p.UnrealizedPnL,
+                UnrealizedPnLPercent: p.UnrealizedPnLPercent
+            ))
+        );
         return Results.Ok(response);
     })
-    .WithName("GetPortfolio");
+    .WithName("GetPortfolio")
+    .WithTags("Portfolio")
+    .WithSummary("Get portfolio summary")
+    .WithDescription("Returns the current portfolio state including cash balance, positions, and unrealized P&L.")
+    .Produces<PortfolioResponse>(StatusCodes.Status200OK)
+    .WithOpenApi();
 
     app.MapGet("/trades", async (AppDbContext db, int page = 1, int pageSize = 20) =>
     {
@@ -133,68 +178,95 @@ try
             .OrderByDescending(t => t.Timestamp)
             .Skip((page - 1) * pageSize)
             .Take(pageSize)
-            .Select(t => new
-            {
-                t.Id,
-                t.OrderId,
-                t.Asset,
-                t.Side,
-                t.Quantity,
-                t.Price,
-                t.Timestamp
-            })
+            .Select(t => new TradeResponse(
+                Id: t.Id,
+                OrderId: t.OrderId,
+                Asset: t.Asset,
+                Side: t.Side,
+                Quantity: t.Quantity,
+                Price: t.Price,
+                Timestamp: t.Timestamp
+            ))
             .ToListAsync();
 
-        var response = new
-        {
-            Page = page,
-            PageSize = pageSize,
-            TotalCount = totalCount,
-            TotalPages = totalPages,
-            Trades = trades
-        };
+        var response = new TradesPagedResponse(
+            Page: page,
+            PageSize: pageSize,
+            TotalCount: totalCount,
+            TotalPages: totalPages,
+            Trades: trades
+        );
         return Results.Ok(response);
     })
-    .WithName("GetTrades");
+    .WithName("GetTrades")
+    .WithTags("Trades")
+    .WithSummary("Get paginated trade history")
+    .WithDescription("Returns a paginated list of executed trades, ordered by timestamp descending. Supports pagination with page (default: 1) and pageSize (default: 20, max: 100) parameters.")
+    .Produces<TradesPagedResponse>(StatusCodes.Status200OK)
+    .WithOpenApi(op =>
+    {
+        if (op.Parameters is { Count: > 1 })
+        {
+            op.Parameters[0].Description = "Page number (minimum: 1)";
+            op.Parameters[1].Description = "Number of trades per page (minimum: 1, maximum: 100)";
+        }
+        return op;
+    });
 
     app.MapGet("/trades/{id:guid}", async (Guid id, AppDbContext db) =>
     {
         var trade = await db.TradeRecords.FindAsync(id);
         if (trade is null)
         {
-            return Results.NotFound(new { Error = "Trade not found", TradeId = id });
+            return Results.NotFound(new TradeNotFoundResponse(Error: "Trade not found", TradeId: id));
         }
 
-        var response = new
-        {
-            trade.Id,
-            trade.OrderId,
-            trade.Asset,
-            trade.Side,
-            trade.Quantity,
-            trade.Price,
-            trade.Timestamp
-        };
+        var response = new TradeResponse(
+            Id: trade.Id,
+            OrderId: trade.OrderId,
+            Asset: trade.Asset,
+            Side: trade.Side,
+            Quantity: trade.Quantity,
+            Price: trade.Price,
+            Timestamp: trade.Timestamp
+        );
         return Results.Ok(response);
     })
-    .WithName("GetTradeById");
+    .WithName("GetTradeById")
+    .WithTags("Trades")
+    .WithSummary("Get trade by ID")
+    .WithDescription("Returns the details of a specific trade by its unique identifier.")
+    .Produces<TradeResponse>(StatusCodes.Status200OK)
+    .Produces<TradeNotFoundResponse>(StatusCodes.Status404NotFound)
+    .WithOpenApi(op =>
+    {
+        if (op.Parameters is { Count: > 0 })
+        {
+            op.Parameters[0].Description = "The unique trade identifier (GUID)";
+        }
+        return op;
+    });
 
     app.MapGet("/risk/limits", (IRiskManager riskManager) =>
     {
         var limits = riskManager.GetCurrentLimits();
-        var response = new
-        {
-            limits.MaxDrawdownPercent,
-            limits.MaxPositionSizePercent,
-            limits.MaxExposurePercent,
-            limits.MinOrderValue,
-            MaxDrawdownPercentFormatted = $"{limits.MaxDrawdownPercent:P2}",
-            MaxPositionSizePercentFormatted = $"{limits.MaxPositionSizePercent:P2}",
-            MaxExposurePercentFormatted = $"{limits.MaxExposurePercent:P2}"
-        };
+        var response = new RiskLimitsResponse(
+            MaxDrawdownPercent: limits.MaxDrawdownPercent,
+            MaxPositionSizePercent: limits.MaxPositionSizePercent,
+            MaxExposurePercent: limits.MaxExposurePercent,
+            MinOrderValue: limits.MinOrderValue,
+            MaxDrawdownPercentFormatted: $"{limits.MaxDrawdownPercent:P2}",
+            MaxPositionSizePercentFormatted: $"{limits.MaxPositionSizePercent:P2}",
+            MaxExposurePercentFormatted: $"{limits.MaxExposurePercent:P2}"
+        );
         return Results.Ok(response);
     })
-    .WithName("GetRiskLimits");
+    .WithName("GetRiskLimits")
+    .WithTags("Risk Management")
+    .WithSummary("Get current risk limits")
+    .WithDescription("Returns the current risk management configuration including maximum drawdown, position size, and exposure limits.")
+    .Produces<RiskLimitsResponse>(StatusCodes.Status200OK)
+    .WithOpenApi();
 
     app.MapPut("/risk/limits", (RiskLimitsUpdateRequest request, IRiskManager riskManager) =>
     {
@@ -223,71 +295,91 @@ try
 
         if (errors.Count > 0)
         {
-            return Results.BadRequest(new { Errors = errors });
+            return Results.BadRequest(new ValidationErrorResponse(Errors: errors));
         }
 
         var updatedLimits = riskManager.UpdateLimits(request);
-        var response = new
-        {
-            Message = "Risk limits updated successfully",
-            Limits = new
-            {
-                updatedLimits.MaxDrawdownPercent,
-                updatedLimits.MaxPositionSizePercent,
-                updatedLimits.MaxExposurePercent,
-                updatedLimits.MinOrderValue,
-                MaxDrawdownPercentFormatted = $"{updatedLimits.MaxDrawdownPercent:P2}",
-                MaxPositionSizePercentFormatted = $"{updatedLimits.MaxPositionSizePercent:P2}",
-                MaxExposurePercentFormatted = $"{updatedLimits.MaxExposurePercent:P2}"
-            }
-        };
+        var limitsResponse = new RiskLimitsResponse(
+            MaxDrawdownPercent: updatedLimits.MaxDrawdownPercent,
+            MaxPositionSizePercent: updatedLimits.MaxPositionSizePercent,
+            MaxExposurePercent: updatedLimits.MaxExposurePercent,
+            MinOrderValue: updatedLimits.MinOrderValue,
+            MaxDrawdownPercentFormatted: $"{updatedLimits.MaxDrawdownPercent:P2}",
+            MaxPositionSizePercentFormatted: $"{updatedLimits.MaxPositionSizePercent:P2}",
+            MaxExposurePercentFormatted: $"{updatedLimits.MaxExposurePercent:P2}"
+        );
+        var response = new RiskLimitsUpdateResponse(
+            Message: "Risk limits updated successfully",
+            Limits: limitsResponse
+        );
         return Results.Ok(response);
     })
-    .WithName("UpdateRiskLimits");
+    .WithName("UpdateRiskLimits")
+    .WithTags("Risk Management")
+    .WithSummary("Update risk limits")
+    .WithDescription("Updates one or more risk management limits. All values are optional; only provided values will be updated. Percentages should be provided as decimals (e.g., 0.05 for 5%).")
+    .Accepts<RiskLimitsUpdateRequest>("application/json")
+    .Produces<RiskLimitsUpdateResponse>(StatusCodes.Status200OK)
+    .Produces<ValidationErrorResponse>(StatusCodes.Status400BadRequest)
+    .WithOpenApi();
 
     app.MapGet("/trading/status", (ITradingControlService tradingControl) =>
     {
         var status = tradingControl.GetStatus();
-        var response = new
-        {
-            status.IsTradingEnabled,
-            Status = status.IsTradingEnabled ? "Active" : "Paused",
-            status.PausedAt,
-            status.PausedBy,
-            status.PauseReason
-        };
+        var response = new TradingStatusResponse(
+            IsTradingEnabled: status.IsTradingEnabled,
+            Status: status.IsTradingEnabled ? "Active" : "Paused",
+            PausedAt: status.PausedAt,
+            PausedBy: status.PausedBy,
+            PauseReason: status.PauseReason
+        );
         return Results.Ok(response);
     })
-    .WithName("GetTradingStatus");
+    .WithName("GetTradingStatus")
+    .WithTags("Trading Control")
+    .WithSummary("Get trading status")
+    .WithDescription("Returns the current trading status including whether trading is active or paused, and pause details if applicable.")
+    .Produces<TradingStatusResponse>(StatusCodes.Status200OK)
+    .WithOpenApi();
 
     app.MapPost("/trading/pause", (TradingPauseRequest? request, ITradingControlService tradingControl) =>
     {
         var status = tradingControl.Pause(request?.Reason, request?.PausedBy);
-        var response = new
-        {
-            Message = status.IsTradingEnabled ? "Trading was already paused" : "Trading paused successfully",
-            status.IsTradingEnabled,
-            Status = status.IsTradingEnabled ? "Active" : "Paused",
-            status.PausedAt,
-            status.PausedBy,
-            status.PauseReason
-        };
+        var response = new TradingPauseResponse(
+            Message: status.IsTradingEnabled ? "Trading was already paused" : "Trading paused successfully",
+            IsTradingEnabled: status.IsTradingEnabled,
+            Status: status.IsTradingEnabled ? "Active" : "Paused",
+            PausedAt: status.PausedAt,
+            PausedBy: status.PausedBy,
+            PauseReason: status.PauseReason
+        );
         return Results.Ok(response);
     })
-    .WithName("PauseTrading");
+    .WithName("PauseTrading")
+    .WithTags("Trading Control")
+    .WithSummary("Pause trading")
+    .WithDescription("Pauses all trading activity. Optionally accepts a reason and identifier for who paused trading. Returns success even if trading was already paused.")
+    .Accepts<TradingPauseRequest>("application/json")
+    .Produces<TradingPauseResponse>(StatusCodes.Status200OK)
+    .WithOpenApi();
 
     app.MapPost("/trading/resume", (TradingResumeRequest? request, ITradingControlService tradingControl) =>
     {
         var status = tradingControl.Resume(request?.ResumedBy);
-        var response = new
-        {
-            Message = status.IsTradingEnabled ? "Trading resumed successfully" : "Trading was already active",
-            status.IsTradingEnabled,
-            Status = status.IsTradingEnabled ? "Active" : "Paused"
-        };
+        var response = new TradingResumeResponse(
+            Message: status.IsTradingEnabled ? "Trading resumed successfully" : "Trading was already active",
+            IsTradingEnabled: status.IsTradingEnabled,
+            Status: status.IsTradingEnabled ? "Active" : "Paused"
+        );
         return Results.Ok(response);
     })
-    .WithName("ResumeTrading");
+    .WithName("ResumeTrading")
+    .WithTags("Trading Control")
+    .WithSummary("Resume trading")
+    .WithDescription("Resumes trading activity if it was previously paused. Optionally accepts an identifier for who resumed trading. Returns success even if trading was already active.")
+    .Accepts<TradingResumeRequest>("application/json")
+    .Produces<TradingResumeResponse>(StatusCodes.Status200OK)
+    .WithOpenApi();
 
     Log.Information("QuantFlow.Orchestrator starting up");
     app.Run();
@@ -301,5 +393,11 @@ finally
     Log.CloseAndFlush();
 }
 
+/// <summary>Request to pause trading</summary>
+/// <param name="Reason">Optional reason for pausing trading</param>
+/// <param name="PausedBy">Optional identifier for who paused trading</param>
 public record TradingPauseRequest(string? Reason, string? PausedBy);
+
+/// <summary>Request to resume trading</summary>
+/// <param name="ResumedBy">Optional identifier for who resumed trading</param>
 public record TradingResumeRequest(string? ResumedBy);
