@@ -5,6 +5,8 @@ import numpy as np
 import time
 import logging
 import sys
+import signal
+import threading
 from datetime import datetime, timezone
 from pythonjsonlogger import jsonlogger
 
@@ -184,23 +186,76 @@ class SignalServiceServicer(quantflow_pb2_grpc.SignalServiceServicer):
         )
 
 
+class GracefulShutdownHandler:
+    def __init__(self, server: grpc.Server, grace_period: float = 5.0):
+        self._server = server
+        self._grace_period = grace_period
+        self._shutdown_event = threading.Event()
+        self._is_shutting_down = False
+
+    def register_signals(self):
+        signal.signal(signal.SIGTERM, self._handle_signal)
+        signal.signal(signal.SIGINT, self._handle_signal)
+        logger.debug("Registered SIGTERM and SIGINT handlers")
+
+    def _handle_signal(self, signum, frame):
+        signal_name = signal.Signals(signum).name
+        logger.info(
+            "Received shutdown signal",
+            extra={"Signal": signal_name, "GracePeriod": self._grace_period}
+        )
+        self._is_shutting_down = True
+        self._initiate_shutdown()
+
+    def _initiate_shutdown(self):
+        logger.info(
+            "Initiating graceful shutdown",
+            extra={"GracePeriod": self._grace_period}
+        )
+        shutdown_event = self._server.stop(self._grace_period)
+
+        def wait_for_shutdown():
+            shutdown_event.wait()
+            logger.info("gRPC server stopped, all connections drained")
+            self._shutdown_event.set()
+
+        threading.Thread(target=wait_for_shutdown, daemon=True).start()
+
+    def wait_for_termination(self):
+        try:
+            while not self._shutdown_event.is_set():
+                time.sleep(0.5)
+        except KeyboardInterrupt:
+            if not self._is_shutting_down:
+                logger.info("Received KeyboardInterrupt, initiating shutdown")
+                self._initiate_shutdown()
+                self._shutdown_event.wait(timeout=self._grace_period + 1)
+
+    @property
+    def is_shutting_down(self) -> bool:
+        return self._is_shutting_down
+
+
 def serve(port: int = 50051, window_size: int = 20, threshold: float = 0.02):
+    grace_period = float(os.environ.get("SIGNAL_ENGINE_SHUTDOWN_GRACE_PERIOD", "5.0"))
+
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
     quantflow_pb2_grpc.add_SignalServiceServicer_to_server(
         SignalServiceServicer(window_size=window_size, threshold=threshold), server
     )
     server.add_insecure_port(f"[::]:{port}")
+
+    shutdown_handler = GracefulShutdownHandler(server, grace_period)
+    shutdown_handler.register_signals()
+
     server.start()
     logger.info(
         "Signal Engine gRPC server started",
         extra={"Port": port, "WindowSize": window_size, "Threshold": threshold}
     )
-    try:
-        while True:
-            time.sleep(86400)
-    except KeyboardInterrupt:
-        logger.info("Shutting down Signal Engine")
-        server.stop(0)
+
+    shutdown_handler.wait_for_termination()
+    logger.info("Signal Engine shutdown complete")
 
 
 if __name__ == "__main__":

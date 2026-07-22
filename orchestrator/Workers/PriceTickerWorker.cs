@@ -48,16 +48,25 @@ public class PriceTickerWorker : IHostedService
 
     public async Task StopAsync(CancellationToken cancellationToken)
     {
-        _logger.LogInformation("PriceTickerWorker stopping");
+        _logger.LogInformation("PriceTickerWorker stopping, signaling cancellation");
 
         if (_executingTask == null)
         {
+            _logger.LogDebug("PriceTickerWorker: no executing task to stop");
             return;
         }
 
         _cts?.Cancel();
 
-        await Task.WhenAny(_executingTask, Task.Delay(Timeout.Infinite, cancellationToken));
+        try
+        {
+            await Task.WhenAny(_executingTask, Task.Delay(TimeSpan.FromSeconds(5), cancellationToken));
+            _logger.LogInformation("PriceTickerWorker stopped successfully");
+        }
+        catch (OperationCanceledException)
+        {
+            _logger.LogDebug("PriceTickerWorker stop was cancelled");
+        }
     }
 
     private async Task ExecuteAsync(CancellationToken stoppingToken)

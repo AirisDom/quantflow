@@ -6,7 +6,11 @@ use quantflow::execution_service_server::{ExecutionService, ExecutionServiceServ
 use quantflow::{ExecutionReceipt, ExecutionStatus, OrderRequest, OrderSide};
 use rand::Rng;
 use std::env;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
+use tokio::signal;
+use tokio::sync::watch;
 use tonic::{transport::Server, Request, Response, Status};
 use tracing::{info, warn, instrument};
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
@@ -15,6 +19,8 @@ use uuid::Uuid;
 pub struct ExecutionServiceImpl {
     min_latency_ms: u64,
     max_latency_ms: u64,
+    active_requests: Arc<AtomicUsize>,
+    is_shutting_down: Arc<AtomicBool>,
 }
 
 impl ExecutionServiceImpl {
@@ -22,7 +28,27 @@ impl ExecutionServiceImpl {
         Self {
             min_latency_ms,
             max_latency_ms,
+            active_requests: Arc::new(AtomicUsize::new(0)),
+            is_shutting_down: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    pub fn with_shutdown_state(
+        min_latency_ms: u64,
+        max_latency_ms: u64,
+        active_requests: Arc<AtomicUsize>,
+        is_shutting_down: Arc<AtomicBool>,
+    ) -> Self {
+        Self {
+            min_latency_ms,
+            max_latency_ms,
+            active_requests,
+            is_shutting_down,
+        }
+    }
+
+    pub fn active_request_count(&self) -> usize {
+        self.active_requests.load(Ordering::SeqCst)
     }
 }
 
@@ -40,6 +66,14 @@ impl ExecutionService for ExecutionServiceImpl {
         &self,
         request: Request<OrderRequest>,
     ) -> Result<Response<ExecutionReceipt>, Status> {
+        if self.is_shutting_down.load(Ordering::SeqCst) {
+            warn!("Rejecting request during shutdown");
+            return Err(Status::unavailable("Service is shutting down"));
+        }
+
+        self.active_requests.fetch_add(1, Ordering::SeqCst);
+        let _guard = ActiveRequestGuard::new(self.active_requests.clone());
+
         let correlation_id = request
             .metadata()
             .get("x-correlation-id")
@@ -133,6 +167,86 @@ pub fn calculate_fill_price(base_price: f64, slippage: f64) -> f64 {
     base_price * (1.0 + slippage)
 }
 
+struct ActiveRequestGuard {
+    counter: Arc<AtomicUsize>,
+}
+
+impl ActiveRequestGuard {
+    fn new(counter: Arc<AtomicUsize>) -> Self {
+        Self { counter }
+    }
+}
+
+impl Drop for ActiveRequestGuard {
+    fn drop(&mut self) {
+        self.counter.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+async fn shutdown_signal(
+    is_shutting_down: Arc<AtomicBool>,
+    active_requests: Arc<AtomicUsize>,
+    shutdown_tx: watch::Sender<bool>,
+) {
+    let ctrl_c = async {
+        signal::ctrl_c()
+            .await
+            .expect("Failed to install Ctrl+C handler");
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        signal::unix::signal(signal::unix::SignalKind::terminate())
+            .expect("Failed to install SIGTERM handler")
+            .recv()
+            .await;
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => {
+            info!("Received SIGINT (Ctrl+C), initiating graceful shutdown");
+        }
+        _ = terminate => {
+            info!("Received SIGTERM, initiating graceful shutdown");
+        }
+    }
+
+    is_shutting_down.store(true, Ordering::SeqCst);
+    info!("Shutdown flag set, waiting for pending executions");
+
+    let grace_period_ms: u64 = env::var("EXECUTION_SHUTDOWN_GRACE_PERIOD_MS")
+        .unwrap_or_else(|_| "5000".to_string())
+        .parse()
+        .unwrap_or(5000);
+
+    let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_millis(grace_period_ms);
+    let check_interval = tokio::time::Duration::from_millis(100);
+
+    while tokio::time::Instant::now() < deadline {
+        let active = active_requests.load(Ordering::SeqCst);
+        if active == 0 {
+            info!("All pending executions completed");
+            break;
+        }
+        info!(active_requests = %active, "Waiting for pending executions to complete");
+        tokio::time::sleep(check_interval).await;
+    }
+
+    let remaining = active_requests.load(Ordering::SeqCst);
+    if remaining > 0 {
+        warn!(
+            remaining_requests = %remaining,
+            "Grace period expired with pending executions"
+        );
+    }
+
+    let _ = shutdown_tx.send(true);
+    info!("Graceful shutdown complete");
+}
+
 fn init_tracing() {
     let log_level = env::var("RUST_LOG")
         .unwrap_or_else(|_| "info".to_string());
@@ -169,8 +283,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .parse()
         .unwrap_or(50);
 
+    let active_requests = Arc::new(AtomicUsize::new(0));
+    let is_shutting_down = Arc::new(AtomicBool::new(false));
+
     let addr = format!("[::]:{}", port).parse()?;
-    let service = ExecutionServiceImpl::new(min_latency_ms, max_latency_ms);
+    let service = ExecutionServiceImpl::with_shutdown_state(
+        min_latency_ms,
+        max_latency_ms,
+        active_requests.clone(),
+        is_shutting_down.clone(),
+    );
+
+    let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
 
     info!(
         service = "QuantFlow.ExecutionLayer",
@@ -181,11 +305,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "Starting gRPC server"
     );
 
+    tokio::spawn(shutdown_signal(
+        is_shutting_down.clone(),
+        active_requests.clone(),
+        shutdown_tx,
+    ));
+
     Server::builder()
         .add_service(ExecutionServiceServer::new(service))
-        .serve(addr)
+        .serve_with_shutdown(addr, async move {
+            shutdown_rx.changed().await.ok();
+            info!("gRPC server shutting down");
+        })
         .await?;
 
+    info!("Execution Layer shutdown complete");
     Ok(())
 }
 

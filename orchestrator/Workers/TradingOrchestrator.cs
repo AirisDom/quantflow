@@ -62,14 +62,25 @@ public class TradingOrchestrator : IHostedService
 
     public async Task StopAsync(CancellationToken cancellationToken)
     {
-        _logger.LogInformation("TradingOrchestrator stopping");
+        _logger.LogInformation("TradingOrchestrator stopping, waiting for pending operations");
 
         if (_executingTask == null)
+        {
+            _logger.LogDebug("TradingOrchestrator: no executing task to stop");
             return;
+        }
 
         _cts?.Cancel();
 
-        await Task.WhenAny(_executingTask, Task.Delay(Timeout.Infinite, cancellationToken));
+        try
+        {
+            await Task.WhenAny(_executingTask, Task.Delay(TimeSpan.FromSeconds(10), cancellationToken));
+            _logger.LogInformation("TradingOrchestrator stopped successfully");
+        }
+        catch (OperationCanceledException)
+        {
+            _logger.LogDebug("TradingOrchestrator stop was cancelled");
+        }
     }
 
     private async Task ExecuteAsync(CancellationToken stoppingToken)

@@ -8,6 +8,7 @@ using QuantFlow.Orchestrator.Configuration;
 using QuantFlow.Orchestrator.Data;
 using QuantFlow.Orchestrator.Logging;
 using QuantFlow.Orchestrator.Services;
+using QuantFlow.Orchestrator.Shutdown;
 using QuantFlow.Orchestrator.Workers;
 using Serilog;
 using Serilog.Formatting.Compact;
@@ -53,8 +54,10 @@ try
     builder.Services.AddSingleton<IExecutionServiceClient, ExecutionServiceClient>();
 
     builder.Services.AddSingleton<IPriceTickChannel, PriceTickChannel>();
+    builder.Services.AddSingleton<IGracefulShutdownService, GracefulShutdownService>();
     builder.Services.AddHostedService<PriceTickerWorker>();
     builder.Services.AddHostedService<TradingOrchestrator>();
+    builder.Services.AddHostedService<GracefulShutdownHostedService>();
 
     builder.Services.AddEndpointsApiExplorer();
     builder.Services.AddSwaggerGen(options =>
@@ -120,8 +123,17 @@ try
 
     app.UseHttpsRedirection();
 
-    app.MapGet("/health", () =>
+    app.MapGet("/health", (IGracefulShutdownService shutdownService) =>
     {
+        if (shutdownService.IsShuttingDown)
+        {
+            var shuttingDownResponse = new HealthResponse(
+                Status: "ShuttingDown",
+                Service: "QuantFlow.Orchestrator",
+                Timestamp: DateTime.UtcNow
+            );
+            return Results.Json(shuttingDownResponse, statusCode: StatusCodes.Status503ServiceUnavailable);
+        }
         var healthResponse = new HealthResponse(
             Status: "Healthy",
             Service: "QuantFlow.Orchestrator",
