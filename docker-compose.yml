@@ -26,13 +26,15 @@ services:
     container_name: quantflow-signal-engine
     environment:
       SIGNAL_ENGINE_PORT: ${SIGNAL_ENGINE_PORT:-50051}
+      SIGNAL_ENGINE_HEALTH_PORT: ${SIGNAL_ENGINE_HEALTH_PORT:-8080}
       SIGNAL_ENGINE_WINDOW_SIZE: ${SIGNAL_ENGINE_WINDOW_SIZE:-20}
       SIGNAL_ENGINE_THRESHOLD: ${SIGNAL_ENGINE_THRESHOLD:-0.02}
       SIGNAL_ENGINE_LOG_LEVEL: ${SIGNAL_ENGINE_LOG_LEVEL:-INFO}
     ports:
       - "${SIGNAL_ENGINE_PORT:-50051}:${SIGNAL_ENGINE_PORT:-50051}"
+      - "${SIGNAL_ENGINE_HEALTH_PORT:-8080}:${SIGNAL_ENGINE_HEALTH_PORT:-8080}"
     healthcheck:
-      test: ["CMD", "python", "-c", "import grpc; channel = grpc.insecure_channel('localhost:${SIGNAL_ENGINE_PORT:-50051}'); grpc.channel_ready_future(channel).result(timeout=5)"]
+      test: ["CMD-SHELL", "curl -f http://localhost:${SIGNAL_ENGINE_HEALTH_PORT:-8080}/health || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -47,13 +49,15 @@ services:
     container_name: quantflow-execution-layer
     environment:
       EXECUTION_SERVICE_PORT: ${EXECUTION_SERVICE_PORT:-50052}
+      EXECUTION_HEALTH_PORT: ${EXECUTION_HEALTH_PORT:-8081}
       EXECUTION_MIN_LATENCY_MS: ${EXECUTION_MIN_LATENCY_MS:-10}
       EXECUTION_MAX_LATENCY_MS: ${EXECUTION_MAX_LATENCY_MS:-50}
       RUST_LOG: ${RUST_LOG:-info}
     ports:
       - "${EXECUTION_SERVICE_PORT:-50052}:${EXECUTION_SERVICE_PORT:-50052}"
+      - "${EXECUTION_HEALTH_PORT:-8081}:${EXECUTION_HEALTH_PORT:-8081}"
     healthcheck:
-      test: ["CMD-SHELL", "timeout 2 bash -c '</dev/tcp/localhost/${EXECUTION_SERVICE_PORT:-50052}' || exit 1"]
+      test: ["CMD-SHELL", "curl -f http://localhost:${EXECUTION_HEALTH_PORT:-8081}/health || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5

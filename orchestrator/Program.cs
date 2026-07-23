@@ -148,6 +148,72 @@ try
     .Produces<HealthResponse>(StatusCodes.Status200OK)
     .WithOpenApi();
 
+    app.MapGet("/ready", async (
+        IGracefulShutdownService shutdownService,
+        AppDbContext db,
+        ISignalServiceClient signalClient,
+        IExecutionServiceClient executionClient,
+        CancellationToken cancellationToken) =>
+    {
+        if (shutdownService.IsShuttingDown)
+        {
+            var shuttingDownResponse = new ReadyResponse(
+                Status: "ShuttingDown",
+                Service: "QuantFlow.Orchestrator",
+                Timestamp: DateTime.UtcNow,
+                Checks: []
+            );
+            return Results.Json(shuttingDownResponse, statusCode: StatusCodes.Status503ServiceUnavailable);
+        }
+
+        var checks = new List<DependencyCheck>();
+        var allHealthy = true;
+
+        var dbStart = DateTime.UtcNow;
+        bool dbHealthy;
+        try
+        {
+            dbHealthy = await db.Database.CanConnectAsync(cancellationToken);
+        }
+        catch
+        {
+            dbHealthy = false;
+        }
+        var dbDuration = (long)(DateTime.UtcNow - dbStart).TotalMilliseconds;
+        checks.Add(new DependencyCheck("PostgreSQL", dbHealthy ? "Healthy" : "Unhealthy", dbDuration));
+        allHealthy &= dbHealthy;
+
+        var signalStart = DateTime.UtcNow;
+        var signalHealthy = await signalClient.CheckHealthAsync(cancellationToken);
+        var signalDuration = (long)(DateTime.UtcNow - signalStart).TotalMilliseconds;
+        checks.Add(new DependencyCheck("SignalService", signalHealthy ? "Healthy" : "Unhealthy", signalDuration));
+        allHealthy &= signalHealthy;
+
+        var execStart = DateTime.UtcNow;
+        var execHealthy = await executionClient.CheckHealthAsync(cancellationToken);
+        var execDuration = (long)(DateTime.UtcNow - execStart).TotalMilliseconds;
+        checks.Add(new DependencyCheck("ExecutionService", execHealthy ? "Healthy" : "Unhealthy", execDuration));
+        allHealthy &= execHealthy;
+
+        var response = new ReadyResponse(
+            Status: allHealthy ? "Ready" : "NotReady",
+            Service: "QuantFlow.Orchestrator",
+            Timestamp: DateTime.UtcNow,
+            Checks: checks
+        );
+
+        return allHealthy
+            ? Results.Ok(response)
+            : Results.Json(response, statusCode: StatusCodes.Status503ServiceUnavailable);
+    })
+    .WithName("ReadinessCheck")
+    .WithTags("Health")
+    .WithSummary("Check service readiness")
+    .WithDescription("Returns the readiness status including database and gRPC service connectivity.")
+    .Produces<ReadyResponse>(StatusCodes.Status200OK)
+    .Produces<ReadyResponse>(StatusCodes.Status503ServiceUnavailable)
+    .WithOpenApi();
+
     app.MapGet("/portfolio", (IPortfolioService portfolioService) =>
     {
         var summary = portfolioService.GetSummary();

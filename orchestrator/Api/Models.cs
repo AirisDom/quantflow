@@ -6,6 +6,24 @@ namespace QuantFlow.Orchestrator.Api;
 /// <param name="Timestamp">UTC timestamp of the health check</param>
 public record HealthResponse(string Status, string Service, DateTime Timestamp);
 
+/// <summary>Readiness check response</summary>
+/// <param name="Status">Current readiness status</param>
+/// <param name="Service">Service name</param>
+/// <param name="Timestamp">UTC timestamp of the readiness check</param>
+/// <param name="Checks">Individual dependency check results</param>
+public record ReadyResponse(
+    string Status,
+    string Service,
+    DateTime Timestamp,
+    IEnumerable<DependencyCheck> Checks
+);
+
+/// <summary>Individual dependency check result</summary>
+/// <param name="Name">Name of the dependency</param>
+/// <param name="Status">Status of the dependency (Healthy/Unhealthy)</param>
+/// <param name="DurationMs">Time taken for the check in milliseconds</param>
+public record DependencyCheck(string Name, string Status, long DurationMs);
+
 /// <summary>Portfolio position details</summary>
 /// <param name="Asset">Asset symbol</param>
 /// <param name="Quantity">Quantity held</param>

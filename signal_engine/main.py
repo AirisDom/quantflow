@@ -7,7 +7,10 @@ import logging
 import sys
 import signal
 import threading
+import asyncio
+import json
 from datetime import datetime, timezone
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from pythonjsonlogger import jsonlogger
 
 import quantflow_pb2
@@ -236,8 +239,73 @@ class GracefulShutdownHandler:
         return self._is_shutting_down
 
 
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    shutdown_handler: 'GracefulShutdownHandler | None' = None
+
+    def log_message(self, format, *args):
+        pass
+
+    def do_GET(self):
+        if self.path == '/health':
+            self._handle_health()
+        elif self.path == '/ready':
+            self._handle_ready()
+        else:
+            self.send_error(404, "Not Found")
+
+    def _handle_health(self):
+        is_shutting_down = (
+            self.shutdown_handler is not None and self.shutdown_handler.is_shutting_down
+        )
+        status = "ShuttingDown" if is_shutting_down else "Healthy"
+        status_code = 503 if is_shutting_down else 200
+        response = {
+            "status": status,
+            "service": "QuantFlow.SignalEngine",
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }
+        self._send_json_response(status_code, response)
+
+    def _handle_ready(self):
+        is_shutting_down = (
+            self.shutdown_handler is not None and self.shutdown_handler.is_shutting_down
+        )
+        status = "ShuttingDown" if is_shutting_down else "Ready"
+        status_code = 503 if is_shutting_down else 200
+        response = {
+            "status": status,
+            "service": "QuantFlow.SignalEngine",
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }
+        self._send_json_response(status_code, response)
+
+    def _send_json_response(self, status_code: int, data: dict):
+        self.send_response(status_code)
+        self.send_header('Content-Type', 'application/json')
+        self.end_headers()
+        self.wfile.write(json.dumps(data).encode('utf-8'))
+
+
+def start_health_server(port: int, shutdown_handler: GracefulShutdownHandler):
+    HealthCheckHandler.shutdown_handler = shutdown_handler
+    server = HTTPServer(('0.0.0.0', port), HealthCheckHandler)
+    server.timeout = 1.0
+
+    def run():
+        logger.info("Health HTTP server started", extra={"Port": port})
+        while not shutdown_handler.is_shutting_down:
+            server.handle_request()
+        server.server_close()
+        logger.info("Health HTTP server stopped")
+
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+    return server
+
+
 def serve(port: int = 50051, window_size: int = 20, threshold: float = 0.02):
     grace_period = float(os.environ.get("SIGNAL_ENGINE_SHUTDOWN_GRACE_PERIOD", "5.0"))
+    health_port = int(os.environ.get("SIGNAL_ENGINE_HEALTH_PORT", "8080"))
 
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
     quantflow_pb2_grpc.add_SignalServiceServicer_to_server(
@@ -248,10 +316,12 @@ def serve(port: int = 50051, window_size: int = 20, threshold: float = 0.02):
     shutdown_handler = GracefulShutdownHandler(server, grace_period)
     shutdown_handler.register_signals()
 
+    start_health_server(health_port, shutdown_handler)
+
     server.start()
     logger.info(
         "Signal Engine gRPC server started",
-        extra={"Port": port, "WindowSize": window_size, "Threshold": threshold}
+        extra={"Port": port, "HealthPort": health_port, "WindowSize": window_size, "Threshold": threshold}
     )
 
     shutdown_handler.wait_for_termination()

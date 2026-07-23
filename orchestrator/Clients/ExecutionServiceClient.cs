@@ -11,6 +11,7 @@ public interface IExecutionServiceClient : IDisposable
 {
     Task<ExecutionReceipt> ExecuteOrderAsync(OrderRequest order, CancellationToken cancellationToken = default);
     bool IsCircuitOpen { get; }
+    Task<bool> CheckHealthAsync(CancellationToken cancellationToken = default);
 }
 
 public class ExecutionServiceClient : IExecutionServiceClient
@@ -157,6 +158,25 @@ public class ExecutionServiceClient : IExecutionServiceClient
                 _logger.LogWarning("Circuit breaker opened due to {FailureCount} consecutive failures",
                     _failureCount);
             }
+        }
+    }
+
+    public async Task<bool> CheckHealthAsync(CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            cts.CancelAfter(TimeSpan.FromSeconds(5));
+            var state = _channel.State;
+            if (state == Grpc.Core.ConnectivityState.Ready)
+                return true;
+            await _channel.ConnectAsync(cts.Token);
+            return _channel.State == Grpc.Core.ConnectivityState.Ready;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Execution service health check failed");
+            return false;
         }
     }
 

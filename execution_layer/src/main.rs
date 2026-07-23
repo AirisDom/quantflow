@@ -2,13 +2,24 @@ pub mod quantflow {
     tonic::include_proto!("quantflow");
 }
 
+use chrono::Utc;
+use http_body_util::Full;
+use hyper::body::Bytes;
+use hyper::server::conn::http1;
+use hyper::service::service_fn;
+use hyper::{Method, Request as HyperRequest, Response as HyperResponse, StatusCode};
+use hyper_util::rt::TokioIo;
 use quantflow::execution_service_server::{ExecutionService, ExecutionServiceServer};
 use quantflow::{ExecutionReceipt, ExecutionStatus, OrderRequest, OrderSide};
 use rand::Rng;
+use serde::Serialize;
+use std::convert::Infallible;
 use std::env;
+use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
+use tokio::net::TcpListener;
 use tokio::signal;
 use tokio::sync::watch;
 use tonic::{transport::Server, Request, Response, Status};
@@ -183,6 +194,96 @@ impl Drop for ActiveRequestGuard {
     }
 }
 
+#[derive(Serialize)]
+struct HealthResponse {
+    status: String,
+    service: String,
+    timestamp: String,
+}
+
+async fn health_handler(
+    req: HyperRequest<hyper::body::Incoming>,
+    is_shutting_down: Arc<AtomicBool>,
+) -> Result<HyperResponse<Full<Bytes>>, Infallible> {
+    let path = req.uri().path();
+    let method = req.method();
+
+    if method != Method::GET {
+        let response = HyperResponse::builder()
+            .status(StatusCode::METHOD_NOT_ALLOWED)
+            .body(Full::new(Bytes::from("Method Not Allowed")))
+            .unwrap();
+        return Ok(response);
+    }
+
+    match path {
+        "/health" | "/ready" => {
+            let shutting_down = is_shutting_down.load(Ordering::SeqCst);
+            let status = if shutting_down { "ShuttingDown" } else { "Healthy" };
+            let status_code = if shutting_down { StatusCode::SERVICE_UNAVAILABLE } else { StatusCode::OK };
+
+            let health_response = HealthResponse {
+                status: status.to_string(),
+                service: "QuantFlow.ExecutionLayer".to_string(),
+                timestamp: Utc::now().to_rfc3339(),
+            };
+
+            let body = serde_json::to_string(&health_response).unwrap();
+            let response = HyperResponse::builder()
+                .status(status_code)
+                .header("Content-Type", "application/json")
+                .body(Full::new(Bytes::from(body)))
+                .unwrap();
+            Ok(response)
+        }
+        _ => {
+            let response = HyperResponse::builder()
+                .status(StatusCode::NOT_FOUND)
+                .body(Full::new(Bytes::from("Not Found")))
+                .unwrap();
+            Ok(response)
+        }
+    }
+}
+
+async fn run_health_server(port: u16, is_shutting_down: Arc<AtomicBool>) {
+    let addr: SocketAddr = format!("0.0.0.0:{}", port).parse().unwrap();
+    let listener = TcpListener::bind(addr).await.unwrap();
+    info!(port = %port, "Health HTTP server started");
+
+    loop {
+        if is_shutting_down.load(Ordering::SeqCst) {
+            break;
+        }
+
+        let accept_result = tokio::time::timeout(
+            tokio::time::Duration::from_secs(1),
+            listener.accept()
+        ).await;
+
+        let (stream, _) = match accept_result {
+            Ok(Ok(result)) => result,
+            Ok(Err(e)) => {
+                warn!(error = %e, "Failed to accept connection");
+                continue;
+            }
+            Err(_) => continue,
+        };
+
+        let is_shutting_down = is_shutting_down.clone();
+        tokio::spawn(async move {
+            let io = TokioIo::new(stream);
+            let service = service_fn(move |req| {
+                let is_shutting_down = is_shutting_down.clone();
+                async move { health_handler(req, is_shutting_down).await }
+            });
+            let _ = http1::Builder::new().serve_connection(io, service).await;
+        });
+    }
+
+    info!("Health HTTP server stopped");
+}
+
 async fn shutdown_signal(
     is_shutting_down: Arc<AtomicBool>,
     active_requests: Arc<AtomicUsize>,
@@ -274,6 +375,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     init_tracing();
 
     let port = env::var("EXECUTION_SERVICE_PORT").unwrap_or_else(|_| "50052".to_string());
+    let health_port: u16 = env::var("EXECUTION_HEALTH_PORT")
+        .unwrap_or_else(|_| "8081".to_string())
+        .parse()
+        .unwrap_or(8081);
     let min_latency_ms: u64 = env::var("EXECUTION_MIN_LATENCY_MS")
         .unwrap_or_else(|_| "10".to_string())
         .parse()
@@ -300,10 +405,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         service = "QuantFlow.ExecutionLayer",
         version = "1.0.0",
         port = %port,
+        health_port = %health_port,
         min_latency_ms = %min_latency_ms,
         max_latency_ms = %max_latency_ms,
         "Starting gRPC server"
     );
+
+    tokio::spawn(run_health_server(health_port, is_shutting_down.clone()));
 
     tokio::spawn(shutdown_signal(
         is_shutting_down.clone(),

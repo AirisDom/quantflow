@@ -21,12 +21,16 @@ COPY execution_layer/src ./src
 RUN cargo build --release
 
 FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 COPY --from=builder /app/target/release/execution_layer .
 
 ENV EXECUTION_SERVICE_PORT=50052
-EXPOSE 50052
+ENV EXECUTION_HEALTH_PORT=8081
+EXPOSE 50052 8081
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8081/health || exit 1
 
 ENTRYPOINT ["./execution_layer"]

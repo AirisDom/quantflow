@@ -11,6 +11,7 @@ public interface ISignalServiceClient : IDisposable
 {
     Task<TradeSignal> GetSignalAsync(IEnumerable<PriceTick> priceTicks, CancellationToken cancellationToken = default);
     Task<TradeSignal> GetSignalAsync(PriceTick priceTick, CancellationToken cancellationToken = default);
+    Task<bool> CheckHealthAsync(CancellationToken cancellationToken = default);
 }
 
 public class SignalServiceClient : ISignalServiceClient
@@ -85,6 +86,25 @@ public class SignalServiceClient : ISignalServiceClient
     public async Task<TradeSignal> GetSignalAsync(PriceTick priceTick, CancellationToken cancellationToken = default)
     {
         return await GetSignalAsync([priceTick], cancellationToken);
+    }
+
+    public async Task<bool> CheckHealthAsync(CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            cts.CancelAfter(TimeSpan.FromSeconds(5));
+            var state = _channel.State;
+            if (state == Grpc.Core.ConnectivityState.Ready)
+                return true;
+            await _channel.ConnectAsync(cts.Token);
+            return _channel.State == Grpc.Core.ConnectivityState.Ready;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Signal service health check failed");
+            return false;
+        }
     }
 
     protected virtual void Dispose(bool disposing)
