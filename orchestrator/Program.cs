@@ -1,6 +1,7 @@
 using System.Reflection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.OpenApi.Models;
+using Prometheus;
 using QuantFlow.Orchestrator.Api;
 using QuantFlow.Orchestrator.Channels;
 using QuantFlow.Orchestrator.Clients;
@@ -52,6 +53,7 @@ try
     builder.Services.AddSingleton<ITradingControlService, TradingControlService>();
     builder.Services.AddSingleton<ISignalServiceClient, SignalServiceClient>();
     builder.Services.AddSingleton<IExecutionServiceClient, ExecutionServiceClient>();
+    builder.Services.AddSingleton<IMetricsService, MetricsService>();
 
     builder.Services.AddSingleton<IPriceTickChannel, PriceTickChannel>();
     builder.Services.AddSingleton<IGracefulShutdownService, GracefulShutdownService>();
@@ -122,6 +124,8 @@ try
     }
 
     app.UseHttpsRedirection();
+
+    app.MapMetrics();
 
     app.MapGet("/health", (IGracefulShutdownService shutdownService) =>
     {

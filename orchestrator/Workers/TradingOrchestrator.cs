@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Microsoft.EntityFrameworkCore;
 using QuantFlow.Orchestrator.Channels;
 using QuantFlow.Orchestrator.Clients;
@@ -23,6 +24,7 @@ public class TradingOrchestrator : IHostedService
     private readonly ITradingControlService _tradingControl;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<TradingOrchestrator> _logger;
+    private readonly IMetricsService _metricsService;
     private readonly TradingOrchestratorOptions _options;
     private CancellationTokenSource? _cts;
     private Task? _executingTask;
@@ -36,6 +38,7 @@ public class TradingOrchestrator : IHostedService
         ITradingControlService tradingControl,
         IServiceScopeFactory scopeFactory,
         ILogger<TradingOrchestrator> logger,
+        IMetricsService metricsService,
         IConfiguration configuration)
     {
         _priceChannel = priceChannel;
@@ -46,6 +49,7 @@ public class TradingOrchestrator : IHostedService
         _tradingControl = tradingControl;
         _scopeFactory = scopeFactory;
         _logger = logger;
+        _metricsService = metricsService;
         _options = new TradingOrchestratorOptions();
         configuration.GetSection("TradingOrchestrator").Bind(_options);
     }
@@ -106,6 +110,7 @@ public class TradingOrchestrator : IHostedService
     {
         _portfolioService.UpdatePrice(priceTick.Asset, (decimal)priceTick.Price);
 
+        var signalStopwatch = Stopwatch.StartNew();
         TradeSignal signal;
         try
         {
@@ -116,6 +121,16 @@ public class TradingOrchestrator : IHostedService
             _logger.LogWarning(ex, "Failed to get signal for {Asset}, skipping", priceTick.Asset);
             return;
         }
+        signalStopwatch.Stop();
+        _metricsService.RecordSignalLatency(signalStopwatch.Elapsed.TotalMilliseconds);
+
+        var signalType = signal.Signal switch
+        {
+            SignalType.Buy => "BUY",
+            SignalType.Sell => "SELL",
+            _ => "HOLD"
+        };
+        _metricsService.IncrementSignalsReceived(signal.Asset, signalType);
 
         _logger.LogDebug("Signal received: {Asset} -> {Signal} (confidence: {Confidence:P2})",
             signal.Asset, signal.Signal, signal.Confidence);
@@ -146,6 +161,7 @@ public class TradingOrchestrator : IHostedService
 
         if (!riskDecision.IsApproved)
         {
+            _metricsService.IncrementRiskRejections(riskDecision.Reason);
             _logger.LogWarning("Trade REJECTED by RiskManager: {Asset} {Side} {Quantity} @ {Price:F2} - {Reason}",
                 proposal.Asset, proposal.Side, proposal.Quantity, proposal.Price, riskDecision.Reason);
             return;
@@ -178,6 +194,7 @@ public class TradingOrchestrator : IHostedService
             Side = proposal.Side == TradeSide.Buy ? OrderSide.SideBuy : OrderSide.SideSell
         };
 
+        var orderStopwatch = Stopwatch.StartNew();
         ExecutionReceipt receipt;
         try
         {
@@ -193,9 +210,13 @@ public class TradingOrchestrator : IHostedService
             _logger.LogError(ex, "Failed to execute order for {Asset}", proposal.Asset);
             return;
         }
+        orderStopwatch.Stop();
+        _metricsService.RecordOrderLatency(orderStopwatch.Elapsed.TotalMilliseconds);
 
         if (receipt.Status == ExecutionStatus.Filled)
         {
+            var side = proposal.Side == TradeSide.Buy ? "BUY" : "SELL";
+            _metricsService.IncrementTradesExecuted(proposal.Asset, side);
             _logger.LogInformation("Order FILLED: {OrderId} {Asset} {Side} @ {FillPrice:F2}",
                 receipt.OrderId, proposal.Asset, proposal.Side, receipt.FillPrice);
 

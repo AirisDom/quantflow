@@ -12,9 +12,33 @@ import json
 from datetime import datetime, timezone
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from pythonjsonlogger import jsonlogger
+from prometheus_client import Counter, Histogram, Gauge, generate_latest, CONTENT_TYPE_LATEST
 
 import quantflow_pb2
 import quantflow_pb2_grpc
+
+SIGNALS_GENERATED_TOTAL = Counter(
+    'signal_engine_signals_generated_total',
+    'Total number of signals generated',
+    ['asset', 'signal_type']
+)
+
+PRICE_TICKS_RECEIVED_TOTAL = Counter(
+    'signal_engine_price_ticks_received_total',
+    'Total number of price ticks received',
+    ['asset']
+)
+
+SIGNAL_PROCESSING_LATENCY = Histogram(
+    'signal_engine_processing_latency_seconds',
+    'Signal processing latency in seconds',
+    buckets=[0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0]
+)
+
+ACTIVE_PRICE_WINDOWS = Gauge(
+    'signal_engine_active_price_windows',
+    'Number of active price windows being tracked'
+)
 
 
 class QuantFlowJsonFormatter(jsonlogger.JsonFormatter):
@@ -109,6 +133,7 @@ class SignalServiceServicer(quantflow_pb2_grpc.SignalServiceServicer):
         )
 
     def GetSignal(self, request_iterator, context):
+        start_time = time.perf_counter()
         correlation_id = None
         for key, value in context.invocation_metadata():
             if key.lower() == 'x-correlation-id':
@@ -120,8 +145,10 @@ class SignalServiceServicer(quantflow_pb2_grpc.SignalServiceServicer):
 
         for tick in request_iterator:
             asset = tick.asset
+            PRICE_TICKS_RECEIVED_TOTAL.labels(asset=asset).inc()
             if asset not in self.price_windows:
                 self.price_windows[asset] = RollingPriceWindow(self.window_size)
+                ACTIVE_PRICE_WINDOWS.inc()
                 logger.info(
                     "Created new price window",
                     extra={"Asset": asset, "CorrelationId": correlation_id}
@@ -136,6 +163,7 @@ class SignalServiceServicer(quantflow_pb2_grpc.SignalServiceServicer):
                 "No valid asset received in price ticks",
                 extra={"CorrelationId": correlation_id}
             )
+            SIGNAL_PROCESSING_LATENCY.observe(time.perf_counter() - start_time)
             return quantflow_pb2.TradeSignal(
                 asset="",
                 signal=quantflow_pb2.HOLD,
@@ -149,6 +177,7 @@ class SignalServiceServicer(quantflow_pb2_grpc.SignalServiceServicer):
                 "Empty price window",
                 extra={"Asset": asset, "CorrelationId": correlation_id}
             )
+            SIGNAL_PROCESSING_LATENCY.observe(time.perf_counter() - start_time)
             return quantflow_pb2.TradeSignal(
                 asset=asset,
                 signal=quantflow_pb2.HOLD,
@@ -167,6 +196,9 @@ class SignalServiceServicer(quantflow_pb2_grpc.SignalServiceServicer):
             quantflow_pb2.BUY: "BUY",
             quantflow_pb2.SELL: "SELL"
         }.get(signal_type, "UNKNOWN")
+
+        SIGNALS_GENERATED_TOTAL.labels(asset=asset, signal_type=signal_name).inc()
+        SIGNAL_PROCESSING_LATENCY.observe(time.perf_counter() - start_time)
 
         logger.info(
             "Signal generated",
@@ -250,8 +282,17 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
             self._handle_health()
         elif self.path == '/ready':
             self._handle_ready()
+        elif self.path == '/metrics':
+            self._handle_metrics()
         else:
             self.send_error(404, "Not Found")
+
+    def _handle_metrics(self):
+        metrics_output = generate_latest()
+        self.send_response(200)
+        self.send_header('Content-Type', CONTENT_TYPE_LATEST)
+        self.end_headers()
+        self.wfile.write(metrics_output)
 
     def _handle_health(self):
         is_shutting_down = (

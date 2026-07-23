@@ -9,6 +9,8 @@ use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::{Method, Request as HyperRequest, Response as HyperResponse, StatusCode};
 use hyper_util::rt::TokioIo;
+use lazy_static::lazy_static;
+use prometheus::{CounterVec, HistogramOpts, HistogramVec, Opts, Registry, TextEncoder, Encoder};
 use quantflow::execution_service_server::{ExecutionService, ExecutionServiceServer};
 use quantflow::{ExecutionReceipt, ExecutionStatus, OrderRequest, OrderSide};
 use rand::Rng;
@@ -18,7 +20,7 @@ use std::env;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tokio::net::TcpListener;
 use tokio::signal;
 use tokio::sync::watch;
@@ -26,6 +28,37 @@ use tonic::{transport::Server, Request, Response, Status};
 use tracing::{info, warn, instrument};
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 use uuid::Uuid;
+
+lazy_static! {
+    static ref REGISTRY: Registry = Registry::new();
+
+    static ref ORDERS_EXECUTED_TOTAL: CounterVec = CounterVec::new(
+        Opts::new("execution_layer_orders_executed_total", "Total number of orders executed"),
+        &["asset", "side"]
+    ).unwrap();
+
+    static ref ORDERS_REJECTED_TOTAL: CounterVec = CounterVec::new(
+        Opts::new("execution_layer_orders_rejected_total", "Total number of orders rejected"),
+        &["reason"]
+    ).unwrap();
+
+    static ref EXECUTION_LATENCY_HISTOGRAM: HistogramVec = HistogramVec::new(
+        HistogramOpts::new("execution_layer_execution_latency_seconds", "Order execution latency in seconds")
+            .buckets(vec![0.001, 0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 1.0]),
+        &["asset"]
+    ).unwrap();
+
+    static ref ACTIVE_EXECUTIONS: prometheus::Gauge = prometheus::Gauge::new(
+        "execution_layer_active_executions", "Number of currently active executions"
+    ).unwrap();
+}
+
+fn register_metrics() {
+    REGISTRY.register(Box::new(ORDERS_EXECUTED_TOTAL.clone())).unwrap();
+    REGISTRY.register(Box::new(ORDERS_REJECTED_TOTAL.clone())).unwrap();
+    REGISTRY.register(Box::new(EXECUTION_LATENCY_HISTOGRAM.clone())).unwrap();
+    REGISTRY.register(Box::new(ACTIVE_EXECUTIONS.clone())).unwrap();
+}
 
 pub struct ExecutionServiceImpl {
     min_latency_ms: u64,
@@ -77,8 +110,13 @@ impl ExecutionService for ExecutionServiceImpl {
         &self,
         request: Request<OrderRequest>,
     ) -> Result<Response<ExecutionReceipt>, Status> {
+        let execution_start = Instant::now();
+        ACTIVE_EXECUTIONS.inc();
+        let _execution_guard = ExecutionMetricsGuard::new();
+
         if self.is_shutting_down.load(Ordering::SeqCst) {
             warn!("Rejecting request during shutdown");
+            ORDERS_REJECTED_TOTAL.with_label_values(&["shutdown"]).inc();
             return Err(Status::unavailable("Service is shutting down"));
         }
 
@@ -108,6 +146,7 @@ impl ExecutionService for ExecutionServiceImpl {
 
         if order.asset.is_empty() {
             warn!(correlation_id = ?correlation_id, "Order rejected: asset cannot be empty");
+            ORDERS_REJECTED_TOTAL.with_label_values(&["invalid_asset"]).inc();
             return Err(Status::invalid_argument("asset cannot be empty"));
         }
 
@@ -118,6 +157,7 @@ impl ExecutionService for ExecutionServiceImpl {
                 correlation_id = ?correlation_id,
                 "Order rejected: quantity must be positive"
             );
+            ORDERS_REJECTED_TOTAL.with_label_values(&["invalid_quantity"]).inc();
             return Err(Status::invalid_argument("quantity must be positive"));
         }
 
@@ -146,6 +186,11 @@ impl ExecutionService for ExecutionServiceImpl {
             status: ExecutionStatus::Filled.into(),
             timestamp,
         };
+
+        ORDERS_EXECUTED_TOTAL.with_label_values(&[&order.asset, side_str]).inc();
+        EXECUTION_LATENCY_HISTOGRAM
+            .with_label_values(&[&order.asset])
+            .observe(execution_start.elapsed().as_secs_f64());
 
         info!(
             order_id = %order_id,
@@ -194,6 +239,20 @@ impl Drop for ActiveRequestGuard {
     }
 }
 
+struct ExecutionMetricsGuard;
+
+impl ExecutionMetricsGuard {
+    fn new() -> Self {
+        Self
+    }
+}
+
+impl Drop for ExecutionMetricsGuard {
+    fn drop(&mut self) {
+        ACTIVE_EXECUTIONS.dec();
+    }
+}
+
 #[derive(Serialize)]
 struct HealthResponse {
     status: String,
@@ -233,6 +292,18 @@ async fn health_handler(
                 .status(status_code)
                 .header("Content-Type", "application/json")
                 .body(Full::new(Bytes::from(body)))
+                .unwrap();
+            Ok(response)
+        }
+        "/metrics" => {
+            let encoder = TextEncoder::new();
+            let metric_families = REGISTRY.gather();
+            let mut buffer = Vec::new();
+            encoder.encode(&metric_families, &mut buffer).unwrap();
+            let response = HyperResponse::builder()
+                .status(StatusCode::OK)
+                .header("Content-Type", encoder.format_type())
+                .body(Full::new(Bytes::from(buffer)))
                 .unwrap();
             Ok(response)
         }
@@ -373,6 +444,7 @@ fn init_tracing() {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     init_tracing();
+    register_metrics();
 
     let port = env::var("EXECUTION_SERVICE_PORT").unwrap_or_else(|_| "50052".to_string());
     let health_port: u16 = env::var("EXECUTION_HEALTH_PORT")
