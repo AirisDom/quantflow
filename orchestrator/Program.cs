@@ -5,6 +5,7 @@ using Prometheus;
 using QuantFlow.Orchestrator.Api;
 using QuantFlow.Orchestrator.Channels;
 using QuantFlow.Orchestrator.Clients;
+using QuantFlow.Orchestrator.Commands;
 using QuantFlow.Orchestrator.Configuration;
 using QuantFlow.Orchestrator.Data;
 using QuantFlow.Orchestrator.Logging;
@@ -13,6 +14,13 @@ using QuantFlow.Orchestrator.Shutdown;
 using QuantFlow.Orchestrator.Workers;
 using Serilog;
 using Serilog.Formatting.Compact;
+
+if (args.Contains("--seed"))
+{
+    var connectionString = Environment.GetEnvironmentVariable("CONNECTION_STRING")
+        ?? "Host=localhost;Port=5432;Database=quantflow;Username=postgres;Password=postgres";
+    return await SeedDataCommand.ExecuteAsync(args, connectionString);
+}
 
 Log.Logger = new LoggerConfiguration()
     .MinimumLevel.Information()
@@ -469,11 +477,14 @@ try
 catch (Exception ex)
 {
     Log.Fatal(ex, "Application terminated unexpectedly");
+    return 1;
 }
 finally
 {
     Log.CloseAndFlush();
 }
+
+return 0;
 
 /// <summary>Request to pause trading</summary>
 /// <param name="Reason">Optional reason for pausing trading</param>
