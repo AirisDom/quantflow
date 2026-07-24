@@ -20,17 +20,35 @@ public class PortfolioService : IPortfolioService
 
     public decimal CashBalance
     {
-        get { lock (_lock) return _cashBalance; }
+        get
+        {
+            lock (_lock)
+            {
+                return _cashBalance;
+            }
+        }
     }
 
     public decimal RealizedPnL
     {
-        get { lock (_lock) return _realizedPnL; }
+        get
+        {
+            lock (_lock)
+            {
+                return _realizedPnL;
+            }
+        }
     }
 
     public decimal PeakEquity
     {
-        get { lock (_lock) return _peakEquity; }
+        get
+        {
+            lock (_lock)
+            {
+                return _peakEquity;
+            }
+        }
     }
 
     public void UpdatePositionAfterTrade(ExecutedTrade trade)
@@ -85,7 +103,9 @@ public class PortfolioService : IPortfolioService
         _cashBalance += tradeValue;
 
         if (!_positions.TryGetValue(asset, out var existing))
+        {
             return;
+        }
 
         var realizedGain = (price - existing.AverageCost) * quantity;
         _realizedPnL += realizedGain;

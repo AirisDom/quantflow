@@ -163,3 +163,12 @@ public record TradeNotFoundResponse(string Error, Guid TradeId);
 /// <summary>Validation errors response</summary>
 /// <param name="Errors">List of validation errors</param>
 public record ValidationErrorResponse(IEnumerable<string> Errors);
+
+/// <summary>Request to pause trading</summary>
+/// <param name="Reason">Optional reason for pausing trading</param>
+/// <param name="PausedBy">Optional identifier for who paused trading</param>
+public record TradingPauseRequest(string? Reason, string? PausedBy);
+
+/// <summary>Request to resume trading</summary>
+/// <param name="ResumedBy">Optional identifier for who resumed trading</param>
+public record TradingResumeRequest(string? ResumedBy);

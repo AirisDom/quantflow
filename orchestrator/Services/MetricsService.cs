@@ -109,19 +109,33 @@ public class MetricsService : IMetricsService
     private static string NormalizeRejectionReason(string reason)
     {
         if (reason.Contains("drawdown", StringComparison.OrdinalIgnoreCase))
+        {
             return "max_drawdown";
+        }
         if (reason.Contains("position size", StringComparison.OrdinalIgnoreCase))
+        {
             return "position_size";
+        }
         if (reason.Contains("exposure", StringComparison.OrdinalIgnoreCase))
+        {
             return "exposure";
+        }
         if (reason.Contains("order value", StringComparison.OrdinalIgnoreCase))
+        {
             return "min_order_value";
+        }
         if (reason.Contains("insufficient", StringComparison.OrdinalIgnoreCase))
+        {
             return "insufficient_position";
+        }
         if (reason.Contains("quantity", StringComparison.OrdinalIgnoreCase))
+        {
             return "invalid_quantity";
+        }
         if (reason.Contains("price", StringComparison.OrdinalIgnoreCase))
+        {
             return "invalid_price";
+        }
         return "other";
     }
 }

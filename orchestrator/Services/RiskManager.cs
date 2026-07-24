@@ -29,19 +29,27 @@ public class RiskManager : IRiskManager
         }
 
         if (proposal.Quantity <= 0)
+        {
             return new RiskDecision(false, "Invalid quantity: must be greater than zero");
+        }
 
         if (proposal.Price <= 0)
+        {
             return new RiskDecision(false, "Invalid price: must be greater than zero");
+        }
 
         var tradeValue = proposal.Quantity * proposal.Price;
 
         if (tradeValue < limits.MinOrderValue)
+        {
             return new RiskDecision(false, $"Order value {tradeValue:C} below minimum {limits.MinOrderValue:C}");
+        }
 
         var currentDrawdown = CalculateDrawdown(portfolio.TotalEquity, portfolio.PeakEquity);
         if (currentDrawdown >= limits.MaxDrawdownPercent)
+        {
             return new RiskDecision(false, $"Max drawdown limit reached: {currentDrawdown:P2} >= {limits.MaxDrawdownPercent:P2}");
+        }
 
         if (!ValidatePositionSize(proposal.Quantity, proposal.Price, portfolio.TotalEquity))
         {
@@ -60,7 +68,9 @@ public class RiskManager : IRiskManager
 
         var existingPosition = portfolio.Positions.GetValueOrDefault(proposal.Asset, 0m);
         if (proposal.Side == TradeSide.Sell && existingPosition < proposal.Quantity)
+        {
             return new RiskDecision(false, $"Insufficient position: attempting to sell {proposal.Quantity} but only hold {existingPosition}");
+        }
 
         return new RiskDecision(true, "Trade approved: all risk checks passed");
     }
@@ -68,10 +78,14 @@ public class RiskManager : IRiskManager
     public decimal CalculateDrawdown(decimal currentEquity, decimal peakEquity)
     {
         if (peakEquity <= 0)
+        {
             return 0m;
+        }
 
         if (currentEquity >= peakEquity)
+        {
             return 0m;
+        }
 
         return (peakEquity - currentEquity) / peakEquity;
     }
@@ -79,7 +93,9 @@ public class RiskManager : IRiskManager
     public bool ValidatePositionSize(decimal proposedQuantity, decimal price, decimal totalEquity)
     {
         if (totalEquity <= 0)
+        {
             return false;
+        }
 
         decimal maxPositionSizePercent;
         lock (_lock)
@@ -96,7 +112,9 @@ public class RiskManager : IRiskManager
     public bool ValidateExposure(decimal currentExposure, decimal proposedTradeValue, decimal totalEquity)
     {
         if (totalEquity <= 0)
+        {
             return false;
+        }
 
         decimal maxExposurePercent;
         lock (_lock)
@@ -123,16 +141,24 @@ public class RiskManager : IRiskManager
         lock (_lock)
         {
             if (request.MaxDrawdownPercent.HasValue)
+            {
                 _maxDrawdownPercent = request.MaxDrawdownPercent.Value;
+            }
 
             if (request.MaxPositionSizePercent.HasValue)
+            {
                 _maxPositionSizePercent = request.MaxPositionSizePercent.Value;
+            }
 
             if (request.MaxExposurePercent.HasValue)
+            {
                 _maxExposurePercent = request.MaxExposurePercent.Value;
+            }
 
             if (request.MinOrderValue.HasValue)
+            {
                 _minOrderValue = request.MinOrderValue.Value;
+            }
 
             return new RiskLimits(_maxDrawdownPercent, _maxPositionSizePercent, _maxExposurePercent, _minOrderValue);
         }

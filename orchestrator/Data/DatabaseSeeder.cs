@@ -1,3 +1,4 @@
+using System.Globalization;
 using Microsoft.EntityFrameworkCore;
 using QuantFlow.Orchestrator.Services;
 
@@ -117,11 +118,11 @@ public class DatabaseSeeder
                 trades.Add(new TradeRecord
                 {
                     Id = Guid.NewGuid(),
-                    OrderId = $"ORD-{tradeTime:yyyyMMdd}-{Guid.NewGuid().ToString()[..8].ToUpper()}",
+                    OrderId = $"ORD-{tradeTime:yyyyMMdd}-{Guid.NewGuid().ToString()[..8].ToUpper(CultureInfo.InvariantCulture)}",
                     Asset = asset,
                     Side = side,
                     Quantity = quantity,
-                    Price = Math.Round(price, asset.Contains("USD") ? 2 : 4),
+                    Price = Math.Round(price, asset.Contains("USD", StringComparison.OrdinalIgnoreCase) ? 2 : 4),
                     Timestamp = tradeTime
                 });
             }

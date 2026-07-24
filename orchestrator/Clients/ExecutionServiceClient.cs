@@ -169,7 +169,9 @@ public class ExecutionServiceClient : IExecutionServiceClient
             cts.CancelAfter(TimeSpan.FromSeconds(5));
             var state = _channel.State;
             if (state == Grpc.Core.ConnectivityState.Ready)
+            {
                 return true;
+            }
             await _channel.ConnectAsync(cts.Token);
             return _channel.State == Grpc.Core.ConnectivityState.Ready;
         }

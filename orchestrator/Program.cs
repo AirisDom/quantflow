@@ -257,9 +257,18 @@ try
 
     app.MapGet("/trades", async (AppDbContext db, int page = 1, int pageSize = 20) =>
     {
-        if (page < 1) page = 1;
-        if (pageSize < 1) pageSize = 1;
-        if (pageSize > 100) pageSize = 100;
+        if (page < 1)
+        {
+            page = 1;
+        }
+        if (pageSize < 1)
+        {
+            pageSize = 1;
+        }
+        if (pageSize > 100)
+        {
+            pageSize = 100;
+        }
 
         var totalCount = await db.TradeRecords.CountAsync();
         var totalPages = (int)Math.Ceiling(totalCount / (double)pageSize);
@@ -365,22 +374,30 @@ try
         if (request.MaxDrawdownPercent.HasValue)
         {
             if (request.MaxDrawdownPercent.Value < 0 || request.MaxDrawdownPercent.Value > 1)
+            {
                 errors.Add("MaxDrawdownPercent must be between 0 and 1");
+            }
         }
         if (request.MaxPositionSizePercent.HasValue)
         {
             if (request.MaxPositionSizePercent.Value < 0 || request.MaxPositionSizePercent.Value > 1)
+            {
                 errors.Add("MaxPositionSizePercent must be between 0 and 1");
+            }
         }
         if (request.MaxExposurePercent.HasValue)
         {
             if (request.MaxExposurePercent.Value < 0 || request.MaxExposurePercent.Value > 1)
+            {
                 errors.Add("MaxExposurePercent must be between 0 and 1");
+            }
         }
         if (request.MinOrderValue.HasValue)
         {
             if (request.MinOrderValue.Value < 0)
+            {
                 errors.Add("MinOrderValue must be non-negative");
+            }
         }
 
         if (errors.Count > 0)
@@ -485,12 +502,3 @@ finally
 }
 
 return 0;
-
-/// <summary>Request to pause trading</summary>
-/// <param name="Reason">Optional reason for pausing trading</param>
-/// <param name="PausedBy">Optional identifier for who paused trading</param>
-public record TradingPauseRequest(string? Reason, string? PausedBy);
-
-/// <summary>Request to resume trading</summary>
-/// <param name="ResumedBy">Optional identifier for who resumed trading</param>
-public record TradingResumeRequest(string? ResumedBy);
